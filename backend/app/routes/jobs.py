@@ -1,9 +1,11 @@
+import json
 import os
 from uuid import uuid4
 
 import redis.asyncio as redis
 from celery import Celery, chain, signature
 from fastapi import APIRouter, HTTPException, Request, status
+from fastapi.responses import FileResponse
 
 from app.schemas.job import JobCreateResponse, JobRecord, JobStatus, JobStatusResponse
 
@@ -95,3 +97,20 @@ async def get_job(job_id: str) -> JobStatusResponse:
 
     job = JobRecord.model_validate_json(raw)
     return JobStatusResponse(job_id=job.job_id, status=job.status, error=job.error, result=job.result)
+
+
+@router.get("/{job_id}/audio")
+async def get_job_audio(job_id: str) -> FileResponse:
+    raw = await redis_client.get(_job_key(job_id))
+    if raw is None:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    # normalized_audio_path isn't part of the public JobRecord schema (it's
+    # internal, written by ingest_audio), so read the raw stored dict rather
+    # than the pydantic model, which would silently drop it.
+    job_data = json.loads(raw)
+    audio_path = job_data.get("normalized_audio_path")
+    if not audio_path or not os.path.isfile(audio_path):
+        raise HTTPException(status_code=404, detail="Audio not available for this job yet")
+
+    return FileResponse(audio_path, media_type="audio/wav")
