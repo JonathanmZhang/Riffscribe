@@ -1,8 +1,8 @@
-# StratoTab: Asynchronous Audio-to-Tablature Transcription Platform
+# Riffscribe: Asynchronous Audio-to-Tablature Transcription Platform
 
 ## 1. Project Overview & Core Value Proposition
 
-StratoTab converts raw instrumental guitar audio — an uploaded file or a link
+Riffscribe converts raw instrumental guitar audio — an uploaded file or a link
 (YouTube, SoundCloud, etc.) — into interactive, playable guitar tablature.
 A user submits audio, the system asynchronously performs polyphonic pitch
 detection and onset/offset estimation, maps the detected notes onto a
@@ -29,7 +29,7 @@ Frontend polls until done → Renders interactive tab.
 
 ### 3.1 Repository Structure
 
-stratotab/
+riffscribe/
 ├── docker-compose.yml
 ├── backend/
 │   ├── Dockerfile
@@ -69,7 +69,10 @@ Three chained tasks, not one monolithic task:
    (mono, 22.05kHz). Writes artifact path to Redis.
 2. transcribe(job_id) — runs Basic Pitch, produces note events
    (pitch, start_time, end_time, velocity, confidence). Filters notes
-   below confidence threshold (0.5 default).
+   below confidence threshold (0.5 default). Also estimates tempo_bpm
+   via librosa.beat.beat_track() on the normalized audio (rounded to an
+   integer; an estimate, least reliable on solo recordings with no
+   percussive beat), stored in the job's Redis record for map_fretboard.
 3. map_fretboard(job_id) — runs DP mapping algorithm, produces final
    TabResult, sets status to "done".
 
@@ -84,7 +87,7 @@ Candidate generation: every valid (string, fret) pair per pitch, fret 0-20.
 Cost function between consecutive positions (s1,f1) → (s2,f2):
 
 cost = |f1 - f2|                      # fret-hand travel distance
-     + (2 if f2 == 0 else 0)          # open-string bonus
+     - (2 if f2 == 0 else 0)          # open-string bonus (reduces cost)
      + (3 if |f1 - f2| > 4 else 0)    # uncomfortable stretch penalty
      + (1 if s1 == s2 else 0)         # same-string penalty
 
@@ -110,7 +113,14 @@ Time is stored in raw seconds, not beats/measures, for v1.
 
 ### 3.7 Known Edge Cases
 
-- Audio > 5 min → reject at ingestion with 422
+- Audio longer than MAX_AUDIO_DURATION_SECONDS (default 300s / 5 min) →
+  rejected inside the async ingest_audio task, not at POST /jobs:
+  duration isn't known until the file is uploaded or downloaded, so
+  POST /jobs still returns 202. ingest_audio reads the duration from the
+  file header (ffprobe) before decoding, sets status "failed" with an
+  error like "ingest_audio failed: audio is 412 seconds long, which
+  exceeds the 300 second limit", and the chain stops there (transcribe
+  and map_fretboard never run).
 - Silent audio → status "done" with empty notes: [], not an error
 - Broken link → ingest_audio catches yt-dlp exception → "failed"
 - Note stretch exceeds hand span → still produce a valid position
@@ -122,7 +132,7 @@ REDIS_URL=redis://redis:6379/0
 CELERY_BROKER_URL=redis://redis:6379/0
 CELERY_RESULT_BACKEND=redis://redis:6379/1
 MAX_UPLOAD_MB=15
-MAX_AUDIO_DURATION_SECONDS=300
+MAX_AUDIO_DURATION_SECONDS=300   # read by the worker (ingest_audio); set in docker-compose.yml
 BASIC_PITCH_CONFIDENCE_THRESHOLD=0.5
 
 ## 4. Current Build Status

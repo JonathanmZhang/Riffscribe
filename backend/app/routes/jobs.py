@@ -21,7 +21,7 @@ DATA_DIR = "/app/data"
 redis_client = redis.from_url(REDIS_URL, decode_responses=True)
 
 # Client-only Celery app: sends tasks by name to the worker, doesn't execute them itself.
-celery_client = Celery("stratotab-client", broker=CELERY_BROKER_URL, backend=CELERY_RESULT_BACKEND)
+celery_client = Celery("riffscribe-client", broker=CELERY_BROKER_URL, backend=CELERY_RESULT_BACKEND)
 
 
 def _enqueue_pipeline(job_id: str, source: dict) -> None:

@@ -1,4 +1,4 @@
-# StratoTab — Project Context
+# Riffscribe — Project Context
 
 ## What this is
 Async audio-to-tablature transcription app. Audio in → guitar tab out.
@@ -20,7 +20,7 @@ condensed, enforceable rules Claude Code should follow every session.
 - GET /jobs/{job_id}/audio — returns FileResponse over the job's stored
   audio (normalized_audio_path), media_type audio/wav. 404 if the job or
   file doesn't exist. Range requests work out of the box via Starlette's
-  FileResponse — don't hand-roll range handling, it's already supported.
+  FileResponse.
 - status is ALWAYS one of: queued | processing | done | failed — never
   invent a new status value
 - result is ONLY the final TabResult (spec 3.6 shape) — intermediate
@@ -34,99 +34,83 @@ Each task must update Redis status at start, and catch exceptions to set
 status: failed with a clear error message — never let a task fail silently.
 Chained via Celery's chain() with immutable=True on each signature —
 tasks read/write job state via job_id in Redis, they do NOT pass return
-values to each other. Don't remove immutable=True; without it, Celery
-appends each task's return value as an extra positional arg to the next
-task, which breaks the (job_id) signature.
+values to each other. Don't remove immutable=True.
 
 ## Conventions
 - Pydantic models for all request/response schemas, in app/schemas/
 - Time in the tab JSON output is stored in raw seconds, not beats/measures
-  (v1 decision — don't add beat/measure grouping unless asked)
 - Don't add new environment variables without updating docker-compose.yml
   and docs/spec.md 3.8 to match
-- Shared job state lives in Redis as job:{job_id}, read/written by both
-  backend and worker via the same JSON shape — see worker/tasks/storage.py
-  for the get_job/update_job helpers; use these rather than writing raw
-  Redis calls inline
+- Shared job state lives in Redis as job:{job_id}, via
+  worker/tasks/storage.py's get_job/update_job helpers — use these
+  rather than writing raw Redis calls inline
 - Shared audio/data files live under /app/data/{job_id}/ inside containers
   (mounted from ./data on the host via docker-compose volumes)
-- Internal intermediate pipeline data (e.g. raw_note_events from
-  transcribe) is stored in the job's Redis record but is NOT part of the
-  public TabResult schema — keep internal state and the public API shape
-  separate, don't conflate them
-- scripts/ is NOT volume-mounted — after editing anything under
-  worker/scripts/, the worker image must be rebuilt
-  (docker compose up -d --build worker) before changes take effect
-- Frontend has no design system yet — a Figma design is planned for
-  later, not now. For now, prioritize clean, functional, reasonably
-  presentable UI (Tailwind defaults are fine) over custom visual design.
-  Don't over-invest time in styling polish until a real design exists.
+- Internal intermediate pipeline data (e.g. raw_note_events) stays out
+  of the public TabResult schema
+- scripts/ is NOT volume-mounted — rebuild the worker image after
+  editing anything under worker/scripts/
+- Frontend has a light Tailwind polish pass done (colors, layout, status
+  badges, sticky grid headers) but no real design system yet — a Figma
+  pass is planned later. Don't over-invest further in visual redesign
+  until that exists.
 - When reading a job's stored data server-side for anything beyond the
-  public API shape (e.g. serving its audio file), read the raw Redis
-  dict directly — don't go through the JobRecord/response Pydantic
-  models, since those intentionally drop internal-only fields like
-  normalized_audio_path.
-- Frontend API base URL is hardcoded to http://localhost:8000 for now
-  (not yet an env var) — CORS is enabled on the backend for
-  http://localhost:3000 specifically, not wildcarded.
+  public API shape, read the raw Redis dict directly — don't go through
+  the JobRecord/response Pydantic models, which intentionally drop
+  internal-only fields like normalized_audio_path.
+- Frontend API base URL is hardcoded to http://localhost:8000 for now.
+  CORS is enabled on the backend for http://localhost:3000 specifically.
 
 ## Known gotchas (don't rediscover these)
 - basic_pitch.inference.predict()'s note_events returns UNNAMED TUPLES:
-  (start_time_s, end_time_s, pitch_midi, amplitude, pitch_bends) — not a
-  dict, not named fields. pitch_midi is an int (MIDI note number) —
-  convert via pretty_midi.note_number_to_name(), already done in
-  transcribe.py, don't hand-roll this conversion elsewhere.
-- basic-pitch's model load is slow on first use in a fresh container
-  (~20s) and librosa's numba JIT warmup adds ~30s to the first
-  ingest_audio call too — both are one-time per-container costs, not bugs.
-- The fretboard cost function (spec 3.5) has no built-in preference for
-  absolute neck position — only relative movement, same-string reuse, and
-  open-string avoidance are penalized/rewarded. Resolved via a secondary
-  lexicographic tie-break: (cost, total_fret_sum) — among equal-cost
-  paths, prefer the lowest total fret sum. Don't remove this tie-break.
-- Chord grouping (both in fretboard.py and in the frontend's TabViewer)
-  uses a 50ms onset tolerance — notes starting within 50ms of each other
-  are treated as one simultaneous chord/column. Keep this tolerance
-  consistent between backend and frontend if either changes.
-- Next.js is pinned to v14 — `create-next-app` with no version pinned
-  defaults to a newer major version; always use `create-next-app@14`
-  explicitly if the frontend ever needs to be re-scaffolded.
-- On Windows/Git Bash specifically (not relevant inside containers or on
-  other OSes): `docker compose exec` container paths can get mangled by
-  Git Bash's automatic POSIX-path conversion — fix is prefixing the host
-  command with MSYS_NO_PATHCONV=1. This is a host-shell issue, not a
-  container or code issue.
+  (start_time_s, end_time_s, pitch_midi, amplitude, pitch_bends).
+  pitch_midi is an int — convert via pretty_midi.note_number_to_name().
+- basic-pitch's model load (~20s) and librosa's numba JIT warmup (~30s)
+  are one-time per-container costs on first use, not bugs.
+- Open-string cost term is -2 (a genuine bonus, reducing cost) — this
+  was originally written as +2, a sign error caught during real-audio
+  testing and fixed in both fretboard.py and spec 3.5. Don't reintroduce
+  the +2 version.
+- Chord-onset grouping tolerance is 150ms (raised from an initial 50ms
+  after real strum testing showed wider onset spreads), used consistently
+  in both fretboard.py and TabViewer.tsx. This is empirical, not proven
+  optimal — fast riffs with sub-150ms onsets may still misgroup.
+- Unplayable notes are dropped, not fatal, in two places:
+  (1) within a chord, the minimum-conflict-resolving subset of notes is
+  dropped (not a greedy lowest-amplitude drop — that was tried first and
+  gave wrong results); (2) a single note outside standard tuning's fret
+  0-20 range is dropped individually. Both log a warning naming the
+  dropped pitch/time/amplitude and continue the job rather than failing it.
+- Riffscribe assumes STANDARD TUNING ONLY (E A D G B E). Real-song testing
+  found songs in alternate tunings (e.g. drop D) have their low notes
+  (e.g. D2, C2) dropped, since those pitches don't exist in standard
+  tuning's fretboard. This is a known v1 scope limitation, not a bug —
+  alternate-tuning support/detection is unimplemented future work.
+- On Windows/Git Bash specifically: `docker compose exec` container
+  paths can get mangled by Git Bash's POSIX-path conversion — prefix
+  with MSYS_NO_PATHCONV=1.
 
 ## Current build status
-CORE BACKEND PIPELINE + FULL FRONTEND FLOW (UPLOAD -> POLL -> RENDER ->
-AUDIO-SYNCED PLAYBACK) ARE COMPLETE AND VERIFIED END TO END IN A REAL
-BROWSER. Effectively Thursday AND most of Friday's roadmap items are
-done a day ahead of schedule.
+CORE PIPELINE + FULL FRONTEND ARE COMPLETE AND VERIFIED AGAINST BOTH
+SYNTHETIC TEST TONES AND REAL, LICENSED GUITAR AUDIO (including a real
+YouTube URL via the yt-dlp ingestion path).
 
-- Repo scaffolding, Dockerfiles, docker-compose.yml: done
-- POST /jobs, GET /jobs/{job_id}, GET /jobs/{job_id}/audio: done and
-  verified (file upload + URL, status polling, audio streaming with
-  working Range/seek support)
-- Celery chain (ingest_audio -> transcribe -> map_fretboard), all three
-  stages fully real and verified — see prior entries in this file's
-  history for the detailed verification of each stage (known-frequency
-  test WAVs correctly transcribed, DP fretboard mapping producing
-  playable positions including chords, tie-break for neck position)
-- Frontend: Next.js 14 app scaffolded and fully wired —
-  UploadForm (file or URL) -> JobStatus (live polling + status display)
-  -> TabViewer (string/fret grid + detail table) -> real <audio controls>
-  element with timeupdate-driven highlight sync between playback position
-  and the currently-sounding note(s) in the grid and table.
-- Verified via actual Playwright browser automation against the live
-  Docker stack at each step, not just described: real file upload,
-  real status transitions, real rendered DOM content, real audio
-  playback with duration/readyState checks, real seeking with confirmed
-  206 Range responses, and confirmed highlight correctly moves between
-  notes on seek.
+- Full pipeline (ingest → transcribe → fretboard mapping): done, real,
+  verified against synthetic tones AND real audio (Wikimedia Commons
+  clips + a real YouTube song)
+- Two real bugs found via real-audio testing and fixed: (1) unplayable
+  chords/notes used to fail the whole job, now gracefully drop the
+  minimum necessary notes; (2) open-string cost sign error
+- Frontend: full flow (upload/URL → poll → render → audio-synced
+  playback highlighting) done and verified, plus a Tailwind visual
+  polish pass (colors, card layout, status badges, sticky grid/table
+  headers for large real-song note counts)
+- Known, documented limitations (not yet fixed, intentionally scoped
+  out of v1): standard tuning only; some Basic Pitch detection artifacts
+  on real audio (phantom harmonics, occasional octave flips) are
+  inherent to the model, not addressed by this codebase; tab grid
+  doesn't auto-scroll to follow playback
 
-NEXT: deployment (Render/Railway for backend+worker, Vercel for
-frontend), README (architecture, setup, demo), and a stress-test pass
-against real (non-synthetic) songs — this is genuinely new: everything
-verified so far has used known-frequency test tones, not real messy
-audio, so real-song behavior is still an open question worth checking
-before Friday's resume-lock.
+NEXT: README, then deployment (Render/Railway for backend+worker,
+Vercel for frontend), then resume bullets locked once a real live link
+exists.

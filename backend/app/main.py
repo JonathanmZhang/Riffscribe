@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.routes import jobs
 
-app = FastAPI(title="StratoTab API")
+app = FastAPI(title="Riffscribe API")
 
 app.add_middleware(
     CORSMiddleware,

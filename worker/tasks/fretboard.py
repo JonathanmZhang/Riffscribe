@@ -1,4 +1,5 @@
 import logging
+from itertools import combinations
 
 import pretty_midi
 
@@ -13,10 +14,11 @@ MAX_FRET = 20
 
 # Notes whose start_time falls within this window of each other are treated
 # as one chord (simultaneous), per spec 3.5. Note timestamps come from ML
-# inference so exact equality can't be relied on.
-CHORD_ONSET_TOLERANCE_SECONDS = 0.05
-
-DEFAULT_TEMPO_BPM = 120.0  # placeholder: transcribe() doesn't estimate tempo yet
+# inference so exact equality can't be relied on. Must match
+# STEP_TOLERANCE_SECONDS in the frontend's TabViewer.tsx. 150ms is an
+# empirically-set value based on real strum testing, not a proven optimum -
+# same status as the cost-function constants.
+CHORD_ONSET_TOLERANCE_SECONDS = 0.15
 
 
 def _candidates_for_pitch(pitch_midi: int) -> list[tuple[int, int]]:
@@ -35,7 +37,7 @@ def _position_cost(prev: tuple[int, int], curr: tuple[int, int]) -> float:
     s2, f2 = curr
     cost = abs(f1 - f2)
     if f2 == 0:
-        cost += 2
+        cost -= 2  # open-string bonus: reduces cost
     if abs(f1 - f2) > 4:
         cost += 3
     if s1 == s2:
@@ -58,10 +60,7 @@ def _candidate_fret_sum(positions: list[tuple[int, int]]) -> int:
     return sum(fret for _, fret in positions)
 
 
-def _voice_chord(pitches_midi: list[int]) -> list[tuple[int, int]]:
-    """v1 chord voicing: assign each note the lowest available fret on an
-    unused string (hand-shape realism is a stretch goal per spec 3.5).
-    """
+def _voice_chord_greedy(pitches_midi: list[int]) -> list[tuple[int, int]] | None:
     order = sorted(range(len(pitches_midi)), key=lambda i: -pitches_midi[i])
     used_strings: set[int] = set()
     assignment: list[tuple[int, int] | None] = [None] * len(pitches_midi)
@@ -74,12 +73,106 @@ def _voice_chord(pitches_midi: list[int]) -> list[tuple[int, int]]:
                 used_strings.add(string)
                 break
         else:
-            raise ValueError(
-                f"no available string/fret for MIDI pitch {pitches_midi[i]} "
-                f"within a {len(pitches_midi)}-note chord"
-            )
+            return None
 
     return assignment  # type: ignore[return-value]
+
+
+def _voice_chord_search(pitches_midi: list[int]) -> list[tuple[int, int]] | None:
+    """Exhaustive fallback: lowest total-fret assignment onto distinct
+    strings, or None if none exists. Only reached when the greedy pass fails,
+    to tell "greedy took a string another note needed" (a voicing exists)
+    apart from "genuinely impossible" (e.g. two notes that are only
+    playable on the same string).
+    """
+    candidate_lists = [_candidates_for_pitch(p) for p in pitches_midi]
+    best: tuple[int, list[tuple[int, int]]] | None = None
+
+    def recurse(i: int, used: set[int], chosen: list[tuple[int, int]], fret_sum: int) -> None:
+        nonlocal best
+        if best is not None and fret_sum >= best[0]:
+            return
+        if i == len(candidate_lists):
+            best = (fret_sum, list(chosen))
+            return
+        for string, fret in sorted(candidate_lists[i], key=lambda c: c[1]):
+            if string in used:
+                continue
+            used.add(string)
+            chosen.append((string, fret))
+            recurse(i + 1, used, chosen, fret_sum + fret)
+            chosen.pop()
+            used.discard(string)
+
+    recurse(0, set(), [], 0)
+    return best[1] if best else None
+
+
+def _voice_chord(pitches_midi: list[int]) -> list[tuple[int, int]] | None:
+    """v1 chord voicing: assign each note the lowest available fret on an
+    unused string (hand-shape realism is a stretch goal per spec 3.5).
+    Returns None if the notes can't be placed on distinct strings.
+    """
+    return _voice_chord_greedy(pitches_midi) or _voice_chord_search(pitches_midi)
+
+
+def _make_voiceable(step_notes: list[dict]) -> tuple[list[dict], list[tuple[int, int]] | None]:
+    """For a chord that can't be voiced on distinct strings, drops notes
+    (unplayable-range notes first, then the lowest-amplitude conflicting set) until it can, per
+    spec 3.7: an unplayable chord still produces a result, not a failed job.
+    Returns the kept notes and their voicing (None for a single remaining
+    note, which the caller handles as a monophonic step).
+    """
+    notes = list(step_notes)
+
+    while len(notes) > 1:
+        pitches = [pretty_midi.note_name_to_number(n["pitch"]) for n in notes]
+        voicing = _voice_chord(pitches)
+        if voicing is not None:
+            return notes, voicing
+
+        out_of_range = [i for i, p in enumerate(pitches) if not _candidates_for_pitch(p)]
+        if out_of_range:
+            victims = [out_of_range[0]]
+            reason = f"outside the playable range (frets 0-{MAX_FRET}, standard tuning)"
+        else:
+            victims = _cheapest_drop_set(notes, pitches)
+            reason = (
+                "the chord cannot be voiced on distinct strings; dropped the "
+                "lowest-total-amplitude set of notes that resolves the conflict"
+            )
+
+        chord_size = len(notes)
+        for i in sorted(victims, reverse=True):
+            dropped = notes.pop(i)
+            logger.warning(
+                "map_fretboard: dropped %s (start %.2fs, amplitude %s) from a %d-note chord: %s",
+                dropped["pitch"],
+                dropped["start_time"],
+                dropped.get("amplitude", "n/a"),
+                chord_size,
+                reason,
+            )
+
+    return notes, None
+
+
+def _cheapest_drop_set(notes: list[dict], pitches: list[int]) -> list[int]:
+    """Smallest set of notes to drop that makes the chord voiceable, breaking
+    ties by lowest total amplitude. Dropping notes one at a time by amplitude
+    alone can remove notes that aren't part of the conflict (e.g. two notes
+    that both need the low E string) while leaving the conflict in place.
+    """
+    for size in range(1, len(notes)):
+        viable = []
+        for drop in combinations(range(len(notes)), size):
+            kept = [p for i, p in enumerate(pitches) if i not in drop]
+            if _voice_chord(kept) is not None:
+                viable.append(drop)
+        if viable:
+            best = min(viable, key=lambda drop: sum(notes[i].get("amplitude", 0.0) for i in drop))
+            return list(best)
+    return list(range(len(notes) - 1))
 
 
 def _group_into_steps(notes: list[dict]) -> list[list[dict]]:
@@ -113,8 +206,9 @@ def map_notes_to_positions(notes: list[dict]) -> list[dict]:
     nearest-position choice.
 
     The cost formula in spec 3.5 has no bias toward absolute neck position
-    (it only penalizes relative movement, same-string reuse, and open
-    strings), so distinct regions of the neck can tie exactly on total cost.
+    (it only penalizes relative movement and same-string reuse, and rewards
+    open strings), so distinct regions of the neck can tie exactly on total
+    cost.
     Each dp value is a (transition_cost, fret_sum) tuple compared
     lexicographically, so ties are broken in favor of the lowest-fret path
     among all cost-optimal paths, without changing the cost formula itself.
@@ -122,25 +216,37 @@ def map_notes_to_positions(notes: list[dict]) -> list[dict]:
     if not notes:
         return []
 
-    steps = _group_into_steps(notes)
-
     # step_candidates[i] is a list of candidate positions for step i; a
     # monophonic step gets every valid (string, fret) for its pitch (real
     # DP choice), a chord step gets exactly one pre-voiced combination.
+    # Chords that can't be voiced are reduced first (notes dropped), so
+    # `steps` holds only the notes that actually get placed.
+    steps: list[list[dict]] = []
     step_candidates: list[list[list[tuple[int, int]]]] = []
-    for step_notes in steps:
-        pitches_midi = [pretty_midi.note_name_to_number(n["pitch"]) for n in step_notes]
+    for raw_step in _group_into_steps(notes):
+        step_notes, voicing = _make_voiceable(raw_step)
         if len(step_notes) == 1:
-            singles = _candidates_for_pitch(pitches_midi[0])
+            singles = _candidates_for_pitch(pretty_midi.note_name_to_number(step_notes[0]["pitch"]))
             if not singles:
-                raise ValueError(
-                    f"pitch {step_notes[0]['pitch']} has no valid fret 0-{MAX_FRET} "
-                    "position in standard tuning"
+                # Same policy as _make_voiceable's chord-note drops: an
+                # unplayable note is skipped with a warning, not a failed job.
+                logger.warning(
+                    "map_fretboard: dropped %s (start %.2fs, amplitude %s): "
+                    "outside the playable range (frets 0-%d, standard tuning)",
+                    step_notes[0]["pitch"],
+                    step_notes[0]["start_time"],
+                    step_notes[0].get("amplitude", "n/a"),
+                    MAX_FRET,
                 )
+                continue
             candidates = [[c] for c in singles]
         else:
-            candidates = [_voice_chord(pitches_midi)]
+            candidates = [voicing]
+        steps.append(step_notes)
         step_candidates.append(candidates)
+
+    if not step_candidates:
+        return []
 
     dp: list[list[tuple[float, int]]] = [
         [(0.0, _candidate_fret_sum(c)) for c in step_candidates[0]]
@@ -201,6 +307,9 @@ def map_fretboard(job_id: str) -> str:
         raw_note_events = job.get("raw_note_events")
         if raw_note_events is None:
             raise ValueError(f"job {job_id} has no raw_note_events; transcribe must run first")
+        tempo_bpm = job.get("tempo_bpm")
+        if tempo_bpm is None:
+            raise ValueError(f"job {job_id} has no tempo_bpm; transcribe must run first")
 
         logger.info("map_fretboard: job %s mapping %d note(s)", job_id, len(raw_note_events))
 
@@ -210,7 +319,9 @@ def map_fretboard(job_id: str) -> str:
         result = {
             "job_id": job_id,
             "duration_seconds": duration_seconds,
-            "tempo_bpm": DEFAULT_TEMPO_BPM,
+            # Estimated by transcribe (librosa beat tracking); see
+            # _estimate_tempo_bpm there for reliability caveats.
+            "tempo_bpm": tempo_bpm,
             "notes": mapped_notes,
         }
 

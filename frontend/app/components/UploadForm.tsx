@@ -44,44 +44,44 @@ export default function UploadForm({ onJobCreated }: UploadFormProps) {
   };
 
   return (
-    <form onSubmit={handleSubmit} className="flex w-full max-w-md flex-col gap-4">
-      <div className="flex gap-6">
-        <label className="flex items-center gap-2">
-          <input
-            type="radio"
-            name="mode"
-            value="file"
-            checked={mode === "file"}
-            onChange={() => setMode("file")}
-          />
-          Upload file
-        </label>
-        <label className="flex items-center gap-2">
-          <input
-            type="radio"
-            name="mode"
-            value="url"
-            checked={mode === "url"}
-            onChange={() => setMode("url")}
-          />
-          Paste URL
-        </label>
+    <form onSubmit={handleSubmit} className="flex w-full flex-col gap-4">
+      <div className="inline-flex w-fit rounded-lg bg-slate-100 p-1 text-sm font-medium">
+        {(["file", "url"] as const).map((value) => (
+          <label
+            key={value}
+            className={`cursor-pointer rounded-md px-4 py-1.5 transition-colors has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-indigo-500 ${
+              mode === value ? "bg-white text-slate-900 shadow-sm" : "text-slate-600 hover:text-slate-900"
+            }`}
+          >
+            <input
+              type="radio"
+              name="mode"
+              value={value}
+              checked={mode === value}
+              onChange={() => setMode(value)}
+              className="sr-only"
+            />
+            {value === "file" ? "Upload file" : "Paste URL"}
+          </label>
+        ))}
       </div>
 
       {mode === "file" ? (
         <input
+          key="file-input"
           type="file"
           accept=".mp3,.wav,.m4a"
           onChange={(event) => setFile(event.target.files?.[0] ?? null)}
-          className="rounded border p-2"
+          className="rounded-lg border border-slate-300 bg-white p-2 text-sm text-slate-700 file:mr-3 file:rounded-md file:border-0 file:bg-indigo-50 file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-indigo-700 hover:file:bg-indigo-100"
         />
       ) : (
         <input
+          key="url-input"
           type="text"
           placeholder="https://..."
           value={url}
           onChange={(event) => setUrl(event.target.value)}
-          className="rounded border p-2"
+          className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/30"
         />
       )}
 
@@ -90,9 +90,9 @@ export default function UploadForm({ onJobCreated }: UploadFormProps) {
       <button
         type="submit"
         disabled={submitting}
-        className="rounded bg-black p-2 text-white disabled:opacity-50"
+        className="w-fit rounded-lg bg-indigo-600 px-5 py-2 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-indigo-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600 disabled:cursor-not-allowed disabled:opacity-50"
       >
-        {submitting ? "Submitting..." : "Submit"}
+        {submitting ? "Submitting..." : "Transcribe"}
       </button>
     </form>
   );

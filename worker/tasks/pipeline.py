@@ -1,5 +1,6 @@
 import logging
 import os
+import subprocess
 
 import librosa
 import soundfile as sf
@@ -12,6 +13,7 @@ logger = logging.getLogger(__name__)
 
 DATA_DIR = "/app/data"
 TARGET_SAMPLE_RATE = 22050
+MAX_AUDIO_DURATION_SECONDS = float(os.environ.get("MAX_AUDIO_DURATION_SECONDS", "300"))
 
 
 def _job_dir(job_id: str) -> str:
@@ -39,6 +41,25 @@ def _download_from_url(url: str, job_dir: str) -> str:
     return downloaded_path
 
 
+def _probe_duration_seconds(input_path: str) -> float:
+    """Reads the duration from the container header via ffprobe, without
+    decoding the audio, so over-long inputs are rejected before the
+    expensive librosa load/resample. Works for every format ingest accepts
+    (mp3/wav/m4a uploads and whatever yt-dlp downloads, e.g. webm), unlike
+    librosa.get_duration(path=), which depends on soundfile's format support.
+    """
+    output = subprocess.run(
+        [
+            "ffprobe", "-v", "error",
+            "-show_entries", "format=duration",
+            "-of", "default=noprint_wrappers=1:nokey=1",
+            input_path,
+        ],
+        capture_output=True, text=True, check=True, timeout=30,
+    ).stdout.strip()
+    return float(output)
+
+
 def _normalize_to_wav(input_path: str, job_dir: str) -> str:
     output_path = os.path.join(job_dir, "normalized.wav")
     audio, _ = librosa.load(input_path, sr=TARGET_SAMPLE_RATE, mono=True)
@@ -63,6 +84,15 @@ def ingest_audio(job_id: str, source: dict) -> str:
                 raise FileNotFoundError(f"Uploaded file not found at {input_path}")
         else:
             raise ValueError(f"Unknown source type: {source_type!r}")
+
+        duration = _probe_duration_seconds(input_path)
+        if duration > MAX_AUDIO_DURATION_SECONDS:
+            # Raising (rather than returning) also stops the chain, so
+            # transcribe/map_fretboard never run on a rejected job.
+            raise ValueError(
+                f"audio is {duration:.0f} seconds long, which exceeds the "
+                f"{MAX_AUDIO_DURATION_SECONDS:.0f} second limit"
+            )
 
         normalized_path = _normalize_to_wav(input_path, job_dir)
         logger.info("ingest_audio: job %s normalized audio at %s", job_id, normalized_path)

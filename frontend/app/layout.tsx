@@ -14,7 +14,7 @@ const geistMono = localFont({
 });
 
 export const metadata: Metadata = {
-  title: "StratoTab",
+  title: "Riffscribe",
   description: "Audio-to-tablature transcription",
 };
 
