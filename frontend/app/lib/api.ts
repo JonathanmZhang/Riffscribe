@@ -1,6 +1,11 @@
-// Backend runs on localhost:8000 per docker-compose.yml. Hardcoded for now
-// per project decision - can become an env var later if needed.
-export const API_BASE_URL = "http://localhost:8000";
+// NEXT_PUBLIC_* values are inlined into the client bundle when Next compiles
+// (at build time in production), so changing them requires a rebuild/redeploy.
+// Must be referenced as literal process.env.NEXT_PUBLIC_... for inlining to work.
+export const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+
+// Hides the "Paste URL" option in the UI when "false". Defaults to enabled.
+// Frontend-only: the backend's POST /jobs accepts URLs regardless.
+export const URL_INGESTION_ENABLED = process.env.NEXT_PUBLIC_ENABLE_URL_INGESTION !== "false";
 
 export type JobStatusValue = "queued" | "processing" | "done" | "failed";
 

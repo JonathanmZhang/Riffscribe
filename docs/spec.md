@@ -135,6 +135,18 @@ MAX_UPLOAD_MB=15
 MAX_AUDIO_DURATION_SECONDS=300   # read by the worker (ingest_audio); set in docker-compose.yml
 BASIC_PITCH_CONFIDENCE_THRESHOLD=0.5
 
+# Backend: comma-separated explicit allowlist of frontend origins for CORS.
+# A "*" wildcard is rejected at startup.
+CORS_ALLOWED_ORIGINS=http://localhost:3000
+
+# Frontend (NEXT_PUBLIC_* are inlined into the client bundle when Next
+# compiles - at build time in production, so changing them on a host like
+# Vercel requires a redeploy):
+NEXT_PUBLIC_API_URL=http://localhost:8000    # backend base URL
+NEXT_PUBLIC_ENABLE_URL_INGESTION=true        # "false" hides the Paste URL
+  option in the UI (file upload only, plus a note pointing to the README).
+  Frontend-only: POST /jobs still accepts {"url": ...} regardless.
+
 ## 4. Current Build Status
 
 Repo scaffolding, Dockerfiles, docker-compose.yml complete. Minimal

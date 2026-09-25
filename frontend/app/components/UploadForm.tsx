@@ -1,9 +1,11 @@
 "use client";
 
 import { useState, type FormEvent } from "react";
-import { createJobFromFile, createJobFromUrl } from "@/app/lib/api";
+import { createJobFromFile, createJobFromUrl, URL_INGESTION_ENABLED } from "@/app/lib/api";
 
 type Mode = "file" | "url";
+
+const README_LOCAL_SETUP_URL = "https://github.com/JonathanmZhang/Riffscribe#running-locally";
 
 interface UploadFormProps {
   onJobCreated: (jobId: string) => void;
@@ -45,35 +47,55 @@ export default function UploadForm({ onJobCreated }: UploadFormProps) {
 
   return (
     <form onSubmit={handleSubmit} className="flex w-full flex-col gap-4">
-      <div className="inline-flex w-fit rounded-lg bg-slate-100 p-1 text-sm font-medium">
-        {(["file", "url"] as const).map((value) => (
-          <label
-            key={value}
-            className={`cursor-pointer rounded-md px-4 py-1.5 transition-colors has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-indigo-500 ${
-              mode === value ? "bg-white text-slate-900 shadow-sm" : "text-slate-600 hover:text-slate-900"
-            }`}
-          >
-            <input
-              type="radio"
-              name="mode"
-              value={value}
-              checked={mode === value}
-              onChange={() => setMode(value)}
-              className="sr-only"
-            />
-            {value === "file" ? "Upload file" : "Paste URL"}
-          </label>
-        ))}
-      </div>
+      {/* With URL ingestion disabled there's only one mode, so the toggle
+          is hidden entirely and mode stays "file". */}
+      {URL_INGESTION_ENABLED && (
+        <div className="inline-flex w-fit rounded-lg bg-slate-100 p-1 text-sm font-medium">
+          {(["file", "url"] as const).map((value) => (
+            <label
+              key={value}
+              className={`cursor-pointer rounded-md px-4 py-1.5 transition-colors has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-indigo-500 ${
+                mode === value ? "bg-white text-slate-900 shadow-sm" : "text-slate-600 hover:text-slate-900"
+              }`}
+            >
+              <input
+                type="radio"
+                name="mode"
+                value={value}
+                checked={mode === value}
+                onChange={() => setMode(value)}
+                className="sr-only"
+              />
+              {value === "file" ? "Upload file" : "Paste URL"}
+            </label>
+          ))}
+        </div>
+      )}
 
       {mode === "file" ? (
-        <input
-          key="file-input"
-          type="file"
-          accept=".mp3,.wav,.m4a"
-          onChange={(event) => setFile(event.target.files?.[0] ?? null)}
-          className="rounded-lg border border-slate-300 bg-white p-2 text-sm text-slate-700 file:mr-3 file:rounded-md file:border-0 file:bg-indigo-50 file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-indigo-700 hover:file:bg-indigo-100"
-        />
+        <>
+          <input
+            key="file-input"
+            type="file"
+            accept=".mp3,.wav,.m4a"
+            onChange={(event) => setFile(event.target.files?.[0] ?? null)}
+            className="rounded-lg border border-slate-300 bg-white p-2 text-sm text-slate-700 file:mr-3 file:rounded-md file:border-0 file:bg-indigo-50 file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-indigo-700 hover:file:bg-indigo-100"
+          />
+          {!URL_INGESTION_ENABLED && (
+            <p className="text-xs text-slate-500">
+              Transcribing from a YouTube or SoundCloud link works when you run Riffscribe locally. See the{" "}
+              <a
+                href={README_LOCAL_SETUP_URL}
+                target="_blank"
+                rel="noreferrer"
+                className="font-medium text-indigo-600 underline-offset-2 hover:underline"
+              >
+                README
+              </a>
+              .
+            </p>
+          )}
+        </>
       ) : (
         <input
           key="url-input"

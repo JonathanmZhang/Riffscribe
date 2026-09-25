@@ -45,6 +45,19 @@ The first job after a fresh start takes noticeably longer. That's the one-time c
 
 Uploaded and normalized audio is stored in `./data/{job_id}/` on the host.
 
+### Configuration
+
+`docker-compose.yml` sets these for local development. The frontend container serves a production build of the app, not a dev server. They're only needed when deploying the services separately.
+
+| Variable | Service | Default | Purpose |
+|----------|---------|---------|---------|
+| `NEXT_PUBLIC_API_URL` | frontend | `http://localhost:8000` | Base URL of the API |
+| `NEXT_PUBLIC_ENABLE_URL_INGESTION` | frontend | `true` | Set to `false` to hide link submission in the UI (file upload only). The API still accepts URLs. |
+| `CORS_ALLOWED_ORIGINS` | backend | `http://localhost:3000` | Comma-separated list of allowed frontend origins. Wildcards are rejected. |
+| `MAX_AUDIO_DURATION_SECONDS` | worker | `300` | Longest audio accepted |
+
+The `NEXT_PUBLIC_*` values are built into the frontend at build time, so they're Docker build arguments rather than runtime environment variables. After changing one, rebuild with `docker compose up -d --build frontend`, or redeploy on a host such as Vercel.
+
 ## API
 
 | Method | Path | Description |
@@ -87,7 +100,7 @@ Riffscribe v1 has been tested against synthetic test tones, real guitar recordin
 - **Tempo is an estimate.** `tempo_bpm` comes from librosa's beat tracker and is rounded to a whole BPM. It was within 1–4 BPM on plucked-guitar test clips with known tempos of 100 and 140. The tracker relies on percussive onsets, so it is less reliable on solo recordings without drums or a clear pulse, and it can lock onto half or double the tempo you'd tap along to. The UI labels it as approximate. The tab itself is laid out in seconds, not beats or measures.
 - **Audio is capped at 5 minutes.** Recordings longer than `MAX_AUDIO_DURATION_SECONDS` (default 300, set in `docker-compose.yml`) are rejected before any decoding or inference. Because duration isn't known until the audio has been uploaded or downloaded, the check runs in the worker rather than at submission. `POST /jobs` still returns `202`, and the job then moves to `failed` with an error such as `audio is 412 seconds long, which exceeds the 300 second limit`. File uploads are also capped at 15 MB.
 - **The tab grid doesn't auto-scroll** to follow playback. On long songs, the highlighted column can be off-screen until you scroll to it.
-- **Local development setup.** The frontend's API base URL is hardcoded to `http://localhost:8000`, and CORS allows only `http://localhost:3000`.
+- **Link submission may be turned off on hosted deployments.** A public deployment can hide the "Paste URL" option by setting `NEXT_PUBLIC_ENABLE_URL_INGESTION=false`. The page then says link transcription is available when running locally. Everything works when you run it yourself with `docker compose`.
 
 ## Tech stack
 

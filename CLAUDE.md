@@ -58,8 +58,24 @@ values to each other. Don't remove immutable=True.
   public API shape, read the raw Redis dict directly — don't go through
   the JobRecord/response Pydantic models, which intentionally drop
   internal-only fields like normalized_audio_path.
-- Frontend API base URL is hardcoded to http://localhost:8000 for now.
-  CORS is enabled on the backend for http://localhost:3000 specifically.
+- Deployment config is env-driven (see docs/spec.md 3.8), with local-dev
+  fallbacks and docker-compose.yml setting the local values:
+  - NEXT_PUBLIC_API_URL (frontend, default http://localhost:8000) — the
+    backend base URL, read in frontend/app/lib/api.ts.
+  - CORS_ALLOWED_ORIGINS (backend, default http://localhost:3000) —
+    comma-separated explicit allowlist; "*" is rejected, keep it that way.
+  - NEXT_PUBLIC_ENABLE_URL_INGESTION (frontend, default true) — "false"
+    hides the Paste URL option in UploadForm and shows a note pointing to
+    the README. Frontend-only by design: don't gate POST /jobs on it.
+  NEXT_PUBLIC_* values are inlined into the JS bundle by `next build`, so
+  they're Docker BUILD ARGS (docker-compose.yml frontend.build.args), not
+  runtime env — setting them as container environment does nothing.
+  Changing one needs `docker compose up -d --build frontend` locally, or
+  a redeploy on Vercel.
+- The frontend image is a production build (multi-stage Dockerfile, Next
+  standalone output via next.config.mjs, `node server.js` as non-root),
+  not `next dev`. The source was never volume-mounted, so there's no
+  hot reload either way — rebuild the frontend image after any change.
 
 ## Known gotchas (don't rediscover these)
 - basic_pitch.inference.predict()'s note_events returns UNNAMED TUPLES:
