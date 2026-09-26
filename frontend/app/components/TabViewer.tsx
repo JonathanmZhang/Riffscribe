@@ -1,3 +1,6 @@
+"use client";
+
+import { useEffect, useMemo, useRef, type RefObject } from "react";
 import type { Note, TabResult } from "@/app/lib/api";
 
 // Display order top-to-bottom matches conventional tab notation: high e on
@@ -17,6 +20,13 @@ const STRING_LABELS: Record<number, string> = {
 // fretboard.py. 150ms is an empirically-set value based on real strum
 // testing, not a proven optimum - same status as the cost-function constants.
 const STEP_TOLERANCE_SECONDS = 0.15;
+
+// Basic Pitch places note onsets slightly after the real attack: on the
+// synthetic chord set (known strum times) a column's first detected note is a
+// median 22ms late (p10 -6ms; low notes can be ~100ms late, which no constant
+// fixes). So a column is highlighted this much before its start_time. This is
+// the only onset-offset adjustment in the frontend.
+export const ONSET_LEAD_SECONDS = 0.02;
 
 interface TabStep {
   time: number;
@@ -39,30 +49,91 @@ export function groupIntoSteps(notes: Note[]): TabStep[] {
   return steps;
 }
 
-function isActive(note: Note, currentTime: number | null): boolean {
-  return currentTime !== null && note.start_time <= currentTime && currentTime < note.end_time;
+// Index of the last column that has started at media time t, or -1.
+function currentStepIndex(stepTimes: number[], t: number): number {
+  let lo = 0;
+  let hi = stepTimes.length - 1;
+  let found = -1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (stepTimes[mid] <= t) {
+      found = mid;
+      lo = mid + 1;
+    } else {
+      hi = mid - 1;
+    }
+  }
+  return found;
 }
 
 interface TabViewerProps {
   result: TabResult;
-  // Current playback position of the paired <audio> element, in seconds.
-  // Notes whose [start_time, end_time) span contains this are highlighted.
-  // null/omitted means no audio is playing - nothing is highlighted.
-  currentTime?: number | null;
+  // The paired <audio> element. Its currentTime is media time, so it already
+  // reflects playbackRate; the highlight needs no speed adjustment.
+  audioRef?: RefObject<HTMLAudioElement>;
 }
 
-export default function TabViewer({ result, currentTime = null }: TabViewerProps) {
-  const steps = groupIntoSteps(result.notes);
-  const sortedNotes = [...result.notes].sort((a, b) => a.start_time - b.start_time);
-  // Last column with a highlighted note, exposed for the ?debug=1 overlay.
-  const activeStep = steps.reduce((last, step, i) => (step.notes.some((n) => isActive(n, currentTime)) ? i : last), -1);
+export default function TabViewer({ result, audioRef }: TabViewerProps) {
+  const steps = useMemo(() => groupIntoSteps(result.notes), [result.notes]);
+  const stepTimes = useMemo(() => steps.map((s) => s.time), [steps]);
+  const sortedNotes = useMemo(() => [...result.notes].sort((a, b) => a.start_time - b.start_time), [result.notes]);
+  const stepOfNote = useMemo(() => {
+    const map = new Map<Note, number>();
+    steps.forEach((step, i) => step.notes.forEach((n) => map.set(n, i)));
+    return map;
+  }, [steps]);
+
+  const rootRef = useRef<HTMLDivElement>(null);
+  const tableRef = useRef<HTMLTableElement>(null);
+
+  // Playhead: the highlighted column is the last one whose start (minus the
+  // onset lead) has passed, kept until the next one starts. An
+  // animation-frame loop reads audio.currentTime (timeupdate only fires ~4
+  // times a second) and, when the column changes, moves the `is-active`
+  // class between the cached cells of the two columns - no React re-render,
+  // so the change is painted in the same frame it's decided.
+  useEffect(() => {
+    const root = rootRef.current;
+    const table = tableRef.current;
+    if (!root || !table) return;
+
+    const columns: Element[][] = steps.map(() => []);
+    root.querySelectorAll<HTMLElement>("[data-col],[data-col-time],[data-note-col]").forEach((el) => {
+      const index = Number(el.dataset.col ?? el.dataset.colTime ?? el.dataset.noteCol);
+      columns[index]?.push(el);
+    });
+
+    let active = -1;
+    let frame = 0;
+    const setActive = (index: number) => {
+      if (index === active) return;
+      columns[active]?.forEach((el) => el.classList.remove("is-active"));
+      columns[index]?.forEach((el) => el.classList.add("is-active"));
+      active = index;
+      table.dataset.activeStep = String(index);
+    };
+
+    const loop = () => {
+      frame = requestAnimationFrame(loop);
+      const audio = audioRef?.current;
+      if (!audio) return;
+      setActive(
+        audio.currentTime > 0 || !audio.paused ? currentStepIndex(stepTimes, audio.currentTime + ONSET_LEAD_SECONDS) : -1,
+      );
+    };
+    frame = requestAnimationFrame(loop);
+    return () => {
+      cancelAnimationFrame(frame);
+      setActive(-1);
+    };
+  }, [audioRef, steps, stepTimes]);
 
   if (steps.length === 0) {
     return <p className="text-slate-500">No notes detected in this audio.</p>;
   }
 
   return (
-    <div className="flex w-full flex-col gap-6">
+    <div ref={rootRef} className="flex w-full flex-col gap-6">
       <dl className="flex flex-wrap gap-2 text-xs">
         {[
           ["Duration", `${result.duration_seconds.toFixed(2)}s`],
@@ -80,25 +151,22 @@ export default function TabViewer({ result, currentTime = null }: TabViewerProps
       {/* Guitar-tab-style grid: one row per string (high e on top, per
           convention), one column per time step. */}
       <div className="overflow-x-auto rounded-lg border border-slate-200 bg-slate-50">
-        <table className="border-collapse font-mono text-sm" data-active-step={activeStep}>
+        <table ref={tableRef} className="border-collapse font-mono text-sm" data-active-step={-1}>
           <tbody>
             {STRING_DISPLAY_ORDER.map((string) => (
               <tr key={string}>
-                <td className="sticky left-0 border-r border-slate-200 bg-slate-100 px-3 py-1 font-semibold text-slate-500">
+                <td className="sticky left-0 z-10 border-r border-slate-200 bg-slate-100 px-3 py-1 font-semibold text-slate-500">
                   {STRING_LABELS[string]}
                 </td>
                 {steps.map((step, i) => {
                   const note = step.notes.find((n) => n.string === string);
-                  const active = note ? isActive(note, currentTime) : false;
                   return (
                     <td
                       key={i}
+                      data-col={i}
+                      data-empty={note ? undefined : ""}
                       className={`min-w-[2.5rem] px-2 py-1 text-center ${
-                        active
-                          ? "bg-amber-300 font-bold text-slate-900"
-                          : note
-                            ? "font-semibold text-slate-900"
-                            : "text-slate-300"
+                        note ? "font-semibold text-slate-900" : "text-slate-300"
                       }`}
                     >
                       {note ? note.fret : "-"}
@@ -108,20 +176,12 @@ export default function TabViewer({ result, currentTime = null }: TabViewerProps
               </tr>
             ))}
             <tr className="border-t border-slate-200">
-              <td className="sticky left-0 border-r border-slate-200 bg-slate-100 px-3 py-1" />
-              {steps.map((step, i) => {
-                const stepActive = step.notes.some((n) => isActive(n, currentTime));
-                return (
-                  <td
-                    key={i}
-                    className={`px-2 py-1 text-center text-xs ${
-                      stepActive ? "font-semibold text-amber-700" : "text-slate-400"
-                    }`}
-                  >
-                    {step.time.toFixed(2)}s
-                  </td>
-                );
-              })}
+              <td className="sticky left-0 z-10 border-r border-slate-200 bg-slate-100 px-3 py-1" />
+              {steps.map((step, i) => (
+                <td key={i} data-col-time={i} className="px-2 py-1 text-center text-xs text-slate-400">
+                  {step.time.toFixed(2)}s
+                </td>
+              ))}
             </tr>
           </tbody>
         </table>
@@ -143,9 +203,8 @@ export default function TabViewer({ result, currentTime = null }: TabViewerProps
             {sortedNotes.map((note, i) => (
               <tr
                 key={i}
-                className={`border-b border-slate-100 last:border-0 ${
-                  isActive(note, currentTime) ? "bg-amber-200 text-slate-900" : "hover:bg-slate-50"
-                }`}
+                data-note-col={stepOfNote.get(note)}
+                className="border-b border-slate-100 last:border-0 hover:bg-slate-50"
               >
                 <td className="px-4 py-1.5 tabular-nums">{note.start_time.toFixed(2)}s</td>
                 <td className="px-4 py-1.5 tabular-nums">{note.end_time.toFixed(2)}s</td>

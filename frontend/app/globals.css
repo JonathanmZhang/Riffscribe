@@ -21,3 +21,26 @@ body {
     text-wrap: balance;
   }
 }
+
+/* Tab playhead. TabViewer's animation-frame loop moves the `is-active` class
+   between columns directly (no React re-render per column change), so the
+   highlight lands in the same frame it's decided. Attribute + class selectors
+   outrank the cells' single Tailwind colour utilities. */
+td[data-col].is-active {
+  background-color: #fcd34d; /* amber-300 */
+  color: #0f172a; /* slate-900 */
+  font-weight: 700;
+}
+td[data-col][data-empty].is-active {
+  background-color: #fef3c7; /* amber-100 */
+  color: #94a3b8; /* slate-400 */
+  font-weight: 400;
+}
+td[data-col-time].is-active {
+  color: #b45309; /* amber-700 */
+  font-weight: 600;
+}
+tr[data-note-col].is-active {
+  background-color: #fde68a; /* amber-200 */
+  color: #0f172a;
+}
