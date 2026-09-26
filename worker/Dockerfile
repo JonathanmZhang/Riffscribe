@@ -25,6 +25,11 @@ RUN python -c "from demucs.pretrained import get_model; get_model('htdemucs_6s')
 RUN apt-get update && apt-get install -y --no-install-recommends fluidsynth fluid-soundfont-gm \
     && rm -rf /var/lib/apt/lists/*
 
+# Time-stretch experiment only (scripts/chord_stages.py detect speed): the
+# Rubber Band CLI and its Python wrapper. Not used by the pipeline.
+RUN apt-get update && apt-get install -y --no-install-recommends rubberband-cli \
+    && rm -rf /var/lib/apt/lists/* && pip install --no-cache-dir pyrubberband==0.4.0
+
 COPY tasks/ ./tasks/
 COPY scripts/ ./scripts/
 CMD ["celery", "-A", "tasks.celery_app", "worker", "--loglevel=info"]

@@ -78,13 +78,40 @@ def config_from_args(args) -> StageConfig:
 # ------------------------------------------------------- stage 0 + 1: detect
 
 
+# Time-stretch experiment: Basic Pitch runs on audio slowed to DETECT_SPEED
+# (pitch unchanged), and note times are scaled back by it. 1.0 = off, which
+# is what the pipeline does. Set by the scripts' --speed flag.
+DETECT_SPEED = 1.0
+STRETCHER = "rubberband"  # or "librosa" (phase vocoder)
+
+
+def _stretch(path: str, speed: float, out_path: str, method: str) -> str:
+    """Slows audio to `speed` (0.5 = half speed, twice as long) without
+    changing pitch."""
+    audio, sr = sf.read(path, dtype="float32")
+    if method == "rubberband":
+        import pyrubberband
+
+        # R3 ("fine") engine: Rubber Band's higher-quality mode, better at
+        # keeping transients such as pick attacks.
+        stretched = pyrubberband.time_stretch(audio, sr, speed, rbargs={"--fine": ""})
+    else:
+        import librosa
+
+        stretched = librosa.effects.time_stretch(audio, rate=speed)
+    sf.write(out_path, np.clip(stretched, -1.0, 1.0), sr, subtype="PCM_16")
+    return out_path
+
+
 class Activations:
     """Basic Pitch's per-frame note activations, for asking "did the model
-    hear this pitch at all?" about notes it never emitted as events."""
+    hear this pitch at all?" about notes it never emitted as events.
+    time_scale maps model time back to original-audio time (the detect speed
+    when the audio was time-stretched)."""
 
-    def __init__(self, note_matrix: np.ndarray):
+    def __init__(self, note_matrix: np.ndarray, time_scale: float = 1.0):
         self.note = np.asarray(note_matrix)  # (frames, 88)
-        self.times = np.asarray(model_frames_to_time(self.note.shape[0]))
+        self.times = np.asarray(model_frames_to_time(self.note.shape[0])) * time_scale
 
     def peak(self, midi: int, start: float, end: float) -> float:
         index = midi - BASIC_PITCH_MIDI_OFFSET
@@ -94,7 +121,7 @@ class Activations:
         return float(self.note[frames, index].max()) if frames.any() else 0.0
 
 
-def _cache_key(input_path: str, separate: bool, seed: int) -> str:
+def _cache_key(input_path: str, separate: bool, seed: int, speed: float = 1.0, stretcher: str = STRETCHER) -> str:
     digest = hashlib.sha1()
     with open(input_path, "rb") as f:
         for chunk in iter(lambda: f.read(1 << 20), b""):
@@ -102,24 +129,33 @@ def _cache_key(input_path: str, separate: bool, seed: int) -> str:
     digest.update(f"|sep={separate}|seed={seed}|bp={importlib.metadata.version('basic-pitch')}".encode())
     if separate:
         digest.update(f"|{DEMUCS_MODEL}|shifts={DEMUCS_SHIFTS}|torch={torch.__version__}".encode())
+    if speed != 1.0:
+        digest.update(f"|speed={speed}|{stretcher}".encode())
     return digest.hexdigest()[:20]
 
 
 def detect_file(input_path: str, workdir: str, separate: bool = False, seed: int = 0,
-                use_cache: bool = True) -> tuple[list[dict], Activations, dict]:
+                use_cache: bool = True, speed: float | None = None,
+                stretcher: str | None = None) -> tuple[list[dict], Activations, dict]:
     """Decodes the input the way ingest_audio does (ffmpeg extraction for
     video/m4a), optionally separates the guitar the way separate_guitar does
     (seeded, since Demucs' shifts are random), normalizes to the 22.05kHz
     mono WAV Basic Pitch is fed, and returns (every note event, activations,
-    info). Cached per file + settings."""
+    info). Cached per file + settings.
+
+    speed < 1 (experiment): Basic Pitch runs on the normalized audio slowed
+    to that speed without changing pitch, and every note time is multiplied
+    by speed so it lines up with the original audio again."""
+    speed = DETECT_SPEED if speed is None else speed
+    stretcher = stretcher or STRETCHER
     cache_path = None
     if use_cache:
         os.makedirs(CACHE_DIR, exist_ok=True)
-        cache_path = os.path.join(CACHE_DIR, _cache_key(input_path, separate, seed) + ".pkl")
+        cache_path = os.path.join(CACHE_DIR, _cache_key(input_path, separate, seed, speed, stretcher) + ".pkl")
         if os.path.exists(cache_path):
             with open(cache_path, "rb") as f:
                 events, note_matrix, info = pickle.load(f)
-            return events, Activations(note_matrix), {**info, "cached": True}
+            return events, Activations(note_matrix, info.get("speed", 1.0)), {**info, "cached": True}
 
     source = ensure_decodable_audio(input_path, workdir)
     info = {"separated": separate, "separation_seconds": None, "seed": seed}
@@ -133,13 +169,25 @@ def detect_file(input_path: str, workdir: str, separate: bool = False, seed: int
         source = os.path.join(workdir, "guitar_stem.wav")
         sf.write(source, stem.T, sample_rate, subtype="PCM_16")
     normalized = normalize_to_wav(source, os.path.join(workdir, "normalized.wav"))
+    info.update(speed=speed, stretcher=stretcher if speed != 1.0 else None,
+                audio_seconds=round(sf.info(normalized).duration, 2), stretch_seconds=0.0)
+    if speed != 1.0:
+        start = time.perf_counter()
+        normalized = _stretch(normalized, speed, os.path.join(workdir, "stretched.wav"), stretcher)
+        info["stretch_seconds"] = round(time.perf_counter() - start, 2)
+    start = time.perf_counter()
     events, model_output = detect_note_events(normalized)
+    info["basic_pitch_seconds"] = round(time.perf_counter() - start, 2)
+    if speed != 1.0:
+        for event in events:
+            event["start_time"] *= speed
+            event["end_time"] *= speed
     note_matrix = np.asarray(model_output["note"], dtype=np.float32)
 
     if cache_path:
         with open(cache_path, "wb") as f:
             pickle.dump((events, note_matrix, info), f)
-    return events, Activations(note_matrix), {**info, "cached": False}
+    return events, Activations(note_matrix, speed), {**info, "cached": False}
 
 
 # ------------------------------------------- stages 2-4: select, group, map

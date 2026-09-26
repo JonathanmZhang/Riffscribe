@@ -30,6 +30,7 @@ import tempfile  # noqa: E402
 
 import pretty_midi  # noqa: E402
 
+from scripts import chord_stages  # noqa: E402
 from scripts.chord_stages import (  # noqa: E402
     PIPELINE,
     StageConfig,
@@ -74,6 +75,7 @@ def _synthetic(config: StageConfig) -> dict:
             "clean_pct": s["clean_pct"],
             "extras_in_tab": s["extras_in_tab"],
             "losses_by_stage": s["losses_by_stage"],
+            "fast": s["sections"]["fast"],
         }
         repeats_json = os.path.join(TESTSET, f"repeats_prog{truth['program']}.json")
         if os.path.exists(repeats_json):
@@ -153,7 +155,10 @@ def _solo(config: StageConfig) -> dict:
 
 
 def run_all(config: StageConfig) -> dict:
-    return {"config": config.describe(), "synthetic": _synthetic(config), "firefire": _firefire(config),
+    label = config.describe()
+    if chord_stages.DETECT_SPEED != 1.0:
+        label += f", detect speed {chord_stages.DETECT_SPEED} ({chord_stages.STRETCHER})"
+    return {"config": label, "synthetic": _synthetic(config), "firefire": _firefire(config),
             "solo": _solo(config)}
 
 
@@ -214,8 +219,13 @@ def main() -> None:
     parser.add_argument("--save", help="write results JSON here")
     parser.add_argument("--compare", help="baseline results JSON to compare against")
     parser.add_argument("--configs", nargs="+", help='sweep: e.g. "threshold=0.4" "chord_floor=0.35"')
+    parser.add_argument("--speed", type=float, default=1.0,
+                        help="experiment: run Basic Pitch on audio time-stretched to this speed (default 1.0 = off)")
+    parser.add_argument("--stretcher", choices=["rubberband", "librosa"], default="rubberband")
     add_config_args(parser)
     args = parser.parse_args()
+    chord_stages.DETECT_SPEED = args.speed
+    chord_stages.STRETCHER = args.stretcher
     logging.getLogger("tasks.fretboard").setLevel(logging.ERROR)
 
     base = json.load(open(args.compare)) if args.compare else None
