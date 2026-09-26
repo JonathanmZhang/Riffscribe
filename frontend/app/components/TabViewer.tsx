@@ -23,7 +23,7 @@ interface TabStep {
   notes: Note[];
 }
 
-function groupIntoSteps(notes: Note[]): TabStep[] {
+export function groupIntoSteps(notes: Note[]): TabStep[] {
   const sorted = [...notes].sort((a, b) => a.start_time - b.start_time);
   const steps: TabStep[] = [];
 
@@ -54,6 +54,8 @@ interface TabViewerProps {
 export default function TabViewer({ result, currentTime = null }: TabViewerProps) {
   const steps = groupIntoSteps(result.notes);
   const sortedNotes = [...result.notes].sort((a, b) => a.start_time - b.start_time);
+  // Last column with a highlighted note, exposed for the ?debug=1 overlay.
+  const activeStep = steps.reduce((last, step, i) => (step.notes.some((n) => isActive(n, currentTime)) ? i : last), -1);
 
   if (steps.length === 0) {
     return <p className="text-slate-500">No notes detected in this audio.</p>;
@@ -78,7 +80,7 @@ export default function TabViewer({ result, currentTime = null }: TabViewerProps
       {/* Guitar-tab-style grid: one row per string (high e on top, per
           convention), one column per time step. */}
       <div className="overflow-x-auto rounded-lg border border-slate-200 bg-slate-50">
-        <table className="border-collapse font-mono text-sm">
+        <table className="border-collapse font-mono text-sm" data-active-step={activeStep}>
           <tbody>
             {STRING_DISPLAY_ORDER.map((string) => (
               <tr key={string}>

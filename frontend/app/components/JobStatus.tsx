@@ -1,8 +1,10 @@
 "use client";
 
-import { useEffect, useRef, useState, type SyntheticEvent } from "react";
-import { getJob, getJobAudioUrl, type JobStage, type JobStatusValue, type TabResult } from "@/app/lib/api";
-import TabViewer from "@/app/components/TabViewer";
+import { useEffect, useMemo, useRef, useState, type SyntheticEvent } from "react";
+import { API_BASE_URL, getJob, getJobAudioUrl, type JobStage, type JobStatusValue, type TabResult } from "@/app/lib/api";
+import DebugOverlay from "@/app/components/DebugOverlay";
+import TabViewer, { groupIntoSteps } from "@/app/components/TabViewer";
+import { readDebugParams, type DebugParams } from "@/app/lib/debug";
 
 const POLL_INTERVAL_MS = 2000;
 const TERMINAL_STATUSES: JobStatusValue[] = ["done", "failed"];
@@ -38,6 +40,10 @@ export default function JobStatus({ jobId }: JobStatusProps) {
   const [currentTime, setCurrentTime] = useState<number | null>(null);
   const [playbackRate, setPlaybackRate] = useState<number>(1);
   const audioRef = useRef<HTMLAudioElement>(null);
+  const [debug, setDebug] = useState<DebugParams>({ debug: false, job: null, src: "audio" });
+  useEffect(() => setDebug(readDebugParams()), []);
+  const stepTimes = useMemo(() => (result ? groupIntoSteps(result.notes).map((s) => s.time) : []), [result]);
+  const audioSrc = debug.src === "stem" ? `${API_BASE_URL}/jobs/${jobId}/stem` : getJobAudioUrl(jobId);
 
   // Runs once the <audio> element mounts (result arrives) and on every
   // speed change. defaultPlaybackRate is set too, since browsers reset
@@ -125,7 +131,7 @@ export default function JobStatus({ jobId }: JobStatusProps) {
             <audio
               ref={audioRef}
               controls
-              src={getJobAudioUrl(jobId)}
+              src={audioSrc}
               onTimeUpdate={handleTimeUpdate}
               onSeeked={handleTimeUpdate}
               // Keeps the buttons in sync if the speed is changed from the
@@ -155,6 +161,7 @@ export default function JobStatus({ jobId }: JobStatusProps) {
           <TabViewer result={result} currentTime={currentTime} />
         </section>
       )}
+      {result && debug.debug && <DebugOverlay audioRef={audioRef} stepTimes={stepTimes} />}
     </div>
   );
 }

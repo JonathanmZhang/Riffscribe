@@ -1,11 +1,18 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import UploadForm from "@/app/components/UploadForm";
 import JobStatus from "@/app/components/JobStatus";
+import { readDebugParams } from "@/app/lib/debug";
 
 export default function Home() {
   const [jobId, setJobId] = useState<string | null>(null);
+
+  // ?debug=1&job=<id> opens an existing job (developer testing).
+  useEffect(() => {
+    const { job } = readDebugParams();
+    if (job) setJobId(job);
+  }, []);
 
   return (
     <main className="mx-auto flex min-h-screen w-full max-w-4xl flex-col gap-8 px-4 py-12 sm:px-6">
