@@ -147,6 +147,17 @@ NEXT_PUBLIC_ENABLE_URL_INGESTION=true        # "false" hides the Paste URL
   option in the UI (file upload only, plus a note pointing to the README).
   Frontend-only: POST /jobs still accepts {"url": ...} regardless.
 
+# Guitar separation (optional separate_guitar task; read by the
+# worker-separation service, set in docker-compose.yml):
+DEMUCS_MODEL=htdemucs_6s                   # must have a "guitar" source; only
+  the default's weights are baked into the worker image
+DEMUCS_SHIFTS=1                            # Demucs random-shift passes;
+  higher is slightly better quality and proportionally slower
+MAX_SEPARATION_DURATION_SECONDS=180        # longer audio fails the job at
+  the separating stage with a readable message
+SEPARATION_SOFT_TIME_LIMIT_SECONDS=900     # separate_guitar's soft time
+  limit (the other tasks keep 120s)
+
 ## 4. Current Build Status
 
 Repo scaffolding, Dockerfiles, docker-compose.yml complete. Minimal

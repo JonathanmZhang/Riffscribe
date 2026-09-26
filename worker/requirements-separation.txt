@@ -1,0 +1,4 @@
+# Guitar source separation. Installed in its own Docker layer after torch /
+# torchaudio (CPU wheels, pinned in worker/Dockerfile), so changing this file
+# doesn't reinstall the TensorFlow stack in requirements.txt.
+demucs==4.0.1

@@ -20,11 +20,31 @@ services:
 
   worker:
     build: ./worker
+    # Default queue only (ingest, transcribe, map). Concurrency 2: this is a
+    # single-user local app, and each process loads its own TensorFlow model.
+    command: celery -A tasks.celery_app worker --loglevel=info -Q celery --concurrency 2 -n main@%h
     environment:
       - REDIS_URL=redis://redis:6379/0
       - CELERY_BROKER_URL=redis://redis:6379/0
       - CELERY_RESULT_BACKEND=redis://redis:6379/1
       - MAX_AUDIO_DURATION_SECONDS=300
+    depends_on:
+      - redis
+    volumes:
+      - ./data:/app/data
+
+  worker-separation:
+    build: ./worker
+    # Guitar separation only, one at a time: each Demucs run needs ~3GB RAM.
+    command: celery -A tasks.celery_app worker --loglevel=info -Q separation --concurrency 1 -n separation@%h
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/1
+      - DEMUCS_MODEL=htdemucs_6s
+      - DEMUCS_SHIFTS=1
+      - MAX_SEPARATION_DURATION_SECONDS=180
+      - SEPARATION_SOFT_TIME_LIMIT_SECONDS=900
     depends_on:
       - redis
     volumes:
