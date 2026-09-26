@@ -7,7 +7,7 @@ confidence filter) -> map_notes_to_positions; run (b) first separates the
 guitar with separate_guitar_stem, as the separate_guitar task does.
 
 Usage (inside the worker container):
-    python -m scripts.ab_separation <audio file> [--out results.json]
+    python -m scripts.ab_separation <audio file> [--out results.json] [--seed N]
 
 The separated stem is saved as <input name>_guitar_stem.wav next to --out
 (or next to the input if --out isn't given) so it can be listened to.
@@ -20,12 +20,14 @@ os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "2")  # before TensorFlow is impor
 import argparse  # noqa: E402
 import json  # noqa: E402
 import logging  # noqa: E402
+import random  # noqa: E402
 import tempfile  # noqa: E402
 import time  # noqa: E402
 
 import numpy as np  # noqa: E402
 import pretty_midi  # noqa: E402
 import soundfile as sf  # noqa: E402
+import torch  # noqa: E402
 
 from tasks.audio_io import (  # noqa: E402
     TARGET_SAMPLE_RATE,
@@ -80,7 +82,16 @@ def _warm_up(workdir: str) -> float:
     return time.perf_counter() - start
 
 
-def run(input_path: str, out_path: str | None) -> dict:
+def _seed_everything(seed: int) -> None:
+    """Demucs' shifts pick random time offsets (Python's random), so without
+    this the stem - and every downstream count - varies slightly between
+    runs of the same file. numpy and torch are seeded too for completeness."""
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+
+
+def run(input_path: str, out_path: str | None, seed: int = 0) -> dict:
     duration = probe_duration_seconds(input_path)
     stem_dir = os.path.dirname(os.path.abspath(out_path or input_path))
     stem_path = os.path.join(stem_dir, os.path.splitext(os.path.basename(input_path))[0] + "_guitar_stem.wav")
@@ -99,6 +110,7 @@ def run(input_path: str, out_path: str | None) -> dict:
         a = _metrics(*_transcribe_and_map(normalized), duration, time.perf_counter() - start)
 
         # (b) separated: the pipeline with isolate_guitar.
+        _seed_everything(seed)
         start = time.perf_counter()
         stem, sample_rate = separate_guitar_stem(decodable)
         separation_seconds = time.perf_counter() - start
@@ -116,6 +128,7 @@ def run(input_path: str, out_path: str | None) -> dict:
         "confidence_threshold": CONFIDENCE_THRESHOLD,
         "demucs_model": DEMUCS_MODEL,
         "demucs_shifts": DEMUCS_SHIFTS,
+        "seed": seed,
         "warmup_seconds": round(warmup_seconds, 2),
         "model_load_seconds": round(model_load_seconds, 2),
         "stem_path": stem_path,
@@ -148,7 +161,10 @@ def _print_table(r: dict) -> None:
     ]
     widths = [max(len(str(row[i])) for row in rows + [("", "full mix", "separated guitar", "delta")]) for i in range(4)]
 
-    print(f"\nA/B: {r['input']}  ({r['duration_seconds']}s, {r['demucs_model']}, shifts={r['demucs_shifts']})")
+    print(
+        f"\nA/B: {r['input']}  ({r['duration_seconds']}s, {r['demucs_model']}, "
+        f"shifts={r['demucs_shifts']}, seed={r['seed']})"
+    )
     header = ("", "full mix", "separated guitar", "delta")
     for row in [header, tuple("-" * w for w in widths)] + rows:
         print(f"  {str(row[0]):<{widths[0]}}  {str(row[1]):>{widths[1]}}  {str(row[2]):>{widths[2]}}  {str(row[3]):>{widths[3]}}")
@@ -173,13 +189,17 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("audio_file")
     parser.add_argument("--out", help="write results as JSON here; the stem WAV is saved next to it")
+    parser.add_argument(
+        "--seed", type=int, default=0,
+        help="seed for Python random, numpy and torch before separation, so repeat runs match (default 0)",
+    )
     args = parser.parse_args()
 
     # map_notes_to_positions logs a warning per dropped note; the counts are
     # in the table, so keep the output readable.
     logging.getLogger("tasks.fretboard").setLevel(logging.ERROR)
 
-    results = run(args.audio_file, args.out)
+    results = run(args.audio_file, args.out, args.seed)
     _print_table(results)
     if args.out:
         with open(args.out, "w") as f:
