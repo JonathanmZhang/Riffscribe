@@ -18,6 +18,13 @@ RUN pip install --no-cache-dir -r requirements-separation.txt
 ENV TORCH_HOME=/app/models
 RUN python -c "from demucs.pretrained import get_model; get_model('htdemucs_6s')"
 
+# Evaluation tooling only (scripts/make_chord_testset.py): FluidSynth and the
+# FluidR3_GM General MIDI soundfont (MIT license), from Debian packages at
+# build time rather than committed. Its own layer after the ML layers so
+# those stay cached. Not used by the pipeline.
+RUN apt-get update && apt-get install -y --no-install-recommends fluidsynth fluid-soundfont-gm \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY tasks/ ./tasks/
 COPY scripts/ ./scripts/
 CMD ["celery", "-A", "tasks.celery_app", "worker", "--loglevel=info"]

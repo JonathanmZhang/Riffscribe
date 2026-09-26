@@ -171,3 +171,13 @@ Riffscribe v1 has been tested against synthetic test tones, real guitar recordin
 - **Infrastructure:** Docker Compose
 
 The full design spec is in [`docs/spec.md`](docs/spec.md).
+
+## Chord accuracy tools
+
+Developer scripts for measuring where chord notes get lost. They run inside the worker container and don't touch the pipeline, Celery or Redis. Worker code is built into the image, so rebuild with `docker compose up -d --build worker` after changing them.
+
+- `python -m scripts.make_chord_testset` renders a synthetic test set: 12 strummed standard-tuning voicings plus a fast progression at 4 chords per second, in clean, overdriven and distorted General MIDI guitar. Each program gets a WAV and a ground-truth JSON in `data/_testaudio/chord_testset/`.
+- `python -m scripts.eval_chords [--separate]` runs the test set through each pipeline stage. It reports where every expected note was lost (not detected, below the confidence threshold, grouping, or mapper) along with extra notes, and saves the results as JSON.
+- `python -m scripts.inspect_chords <file> <start_s> <end_s> [--separate] [--expect "G,B,D"]` shows every note event, the grouping and the fretboard mapping for one window of any recording.
+
+The test set is rendered with [FluidSynth](https://www.fluidsynth.org/) and the **FluidR3_GM** General MIDI soundfont by Frank Wen, released under the **MIT license**. Both are installed from Debian packages (`fluidsynth`, `fluid-soundfont-gm`) when the worker image is built, and neither is committed to this repository.
