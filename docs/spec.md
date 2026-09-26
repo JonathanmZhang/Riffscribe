@@ -135,6 +135,11 @@ CELERY_RESULT_BACKEND=redis://redis:6379/1
 MAX_UPLOAD_MB=200   # backend; local-only app, sized for music videos
 MAX_AUDIO_DURATION_SECONDS=300   # read by the worker (ingest_audio); set in docker-compose.yml
 BASIC_PITCH_CONFIDENCE_THRESHOLD=0.5
+CHORD_TONE_CONFIDENCE_FLOOR=0.45   # worker (transcribe): a note below the
+  threshold is still kept if it's >= this AND a note >= the threshold starts
+  within the chord onset window (150ms) of it, i.e. a chord tone. Values >=
+  the threshold disable it. 0.45 chosen from the chord eval: full recall on
+  the real tab-sample clip; lower values mostly add octave errors there.
 
 # Backend: comma-separated explicit allowlist of frontend origins for CORS.
 # A "*" wildcard is rejected at startup.

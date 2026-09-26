@@ -1,3 +1,4 @@
+import bisect
 import logging
 import os
 
@@ -8,11 +9,15 @@ from basic_pitch import ICASSP_2022_MODEL_PATH
 from basic_pitch.inference import predict
 
 from tasks.celery_app import app
+from tasks.fretboard import CHORD_ONSET_TOLERANCE_SECONDS
 from tasks.storage import get_job, update_job
 
 logger = logging.getLogger(__name__)
 
 CONFIDENCE_THRESHOLD = float(os.environ.get("BASIC_PITCH_CONFIDENCE_THRESHOLD", "0.5"))
+# Lower confidence bar for notes that start with a confident note (chord
+# tones); see select_notes. Values >= CONFIDENCE_THRESHOLD disable it.
+CHORD_TONE_CONFIDENCE_FLOOR = float(os.environ.get("CHORD_TONE_CONFIDENCE_FLOOR", "0.45"))
 
 
 def detect_note_events(audio_path: str) -> tuple[list[dict], dict]:
@@ -36,12 +41,36 @@ def detect_note_events(audio_path: str) -> tuple[list[dict], dict]:
     return events, model_output
 
 
-def select_notes(events: list[dict], threshold: float = CONFIDENCE_THRESHOLD) -> list[dict]:
+def select_notes(
+    events: list[dict],
+    threshold: float = CONFIDENCE_THRESHOLD,
+    chord_floor: float = CHORD_TONE_CONFIDENCE_FLOOR,
+) -> list[dict]:
     """Post-detection note selection: returns copies of events, each with a
     "kept" flag. Shared by extract_notes (the pipeline) and the measurement
     scripts, so both apply exactly the same rules.
+
+    A note at or above `threshold` is kept. A weaker note is also kept when
+    it's at least `chord_floor` AND a note at or above `threshold` starts
+    within the chord onset window (CHORD_ONSET_TOLERANCE_SECONDS) of it:
+    Basic Pitch tends to give the other tones of a strummed chord 0.35-0.5,
+    while they arrive together with at least one confident note. Isolated
+    weak notes stay filtered. chord_floor >= threshold disables the rule.
     """
-    return [{**event, "kept": event["amplitude"] >= threshold} for event in events]
+    confident_onsets = sorted(e["start_time"] for e in events if e["amplitude"] >= threshold)
+
+    def near_confident(start: float) -> bool:
+        i = bisect.bisect_left(confident_onsets, start - CHORD_ONSET_TOLERANCE_SECONDS)
+        return i < len(confident_onsets) and confident_onsets[i] <= start + CHORD_ONSET_TOLERANCE_SECONDS
+
+    return [
+        {
+            **event,
+            "kept": event["amplitude"] >= threshold
+            or (chord_floor <= event["amplitude"] < threshold and near_confident(event["start_time"])),
+        }
+        for event in events
+    ]
 
 
 def extract_notes(audio_path: str) -> tuple[int, list[dict]]:

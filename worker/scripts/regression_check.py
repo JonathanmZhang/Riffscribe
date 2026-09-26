@@ -28,6 +28,8 @@ import json  # noqa: E402
 import logging  # noqa: E402
 import tempfile  # noqa: E402
 
+import pretty_midi  # noqa: E402
+
 from scripts.chord_stages import (  # noqa: E402
     PIPELINE,
     StageConfig,
@@ -43,6 +45,18 @@ TESTSET = "/app/data/_testaudio/chord_testset"
 FIREFIRE = "/app/data/_testaudio/firefire.webm"
 FIREFIRE_WINDOWS = [(28.0, 31.0), (39.5, 42.5), (60.0, 63.0)]
 SOLO_CLIP = "/app/data/samples/tab_sample.ogg"
+# Ground truth for SOLO_CLIP, read from the tab it illustrates on Wikimedia
+# Commons (File:GuitarTabulatureSample1.svg): 4 bars of 4/4 in A major,
+# 14 columns / 30 notes, as (beat, MIDI notes). It's mostly 2-3 note chords,
+# not a single-note line. Beat times are aligned to the audio by fitting
+# tempo and offset against the raw Basic Pitch events (see _fit_solo_truth).
+SOLO_TRUTH = [
+    (0.0, [45, 57]), (1.5, [61]), (2.0, [45, 61, 64]), (3.0, [69]),
+    (4.0, [50, 62, 66]), (5.0, [69]), (5.5, [66]), (6.0, [45, 61, 64]),
+    (8.0, [44, 59, 62]), (9.0, [40]), (9.5, [64]), (10.0, [45, 52, 61]), (11.0, [49, 57]),
+    (12.0, [52, 56, 59]), (14.0, [45, 57]),
+]
+SOLO_MATCH_S = 0.10
 
 
 def _synthetic(config: StageConfig) -> dict:
@@ -75,13 +89,58 @@ def _firefire(config: StageConfig) -> dict:
     return out
 
 
+def _fit_solo_truth(events: list[dict]) -> tuple[float, float]:
+    """(seconds per beat, offset) that line up the most tab notes with raw
+    events of the same pitch. Uses raw events, so the alignment doesn't
+    depend on the settings under test."""
+    by_pitch: dict[int, list[float]] = {}
+    for e in events:
+        by_pitch.setdefault(e["midi"], []).append(e["start_time"])
+    best = (-1, 0.5, 0.0)
+    for spb in [0.40 + 0.002 * i for i in range(101)]:
+        for offset in [-0.2 + 0.01 * i for i in range(171)]:
+            hits = sum(
+                any(abs(t - (offset + beat * spb)) <= SOLO_MATCH_S for t in by_pitch.get(m, ()))
+                for beat, notes in SOLO_TRUTH for m in notes
+            )
+            if hits > best[0]:
+                best = (hits, spb, offset)
+    return best[1], best[2]
+
+
 def _solo(config: StageConfig) -> dict:
     with tempfile.TemporaryDirectory() as workdir:
         events, _, _ = detect_file(SOLO_CLIP, workdir)
     stages = run_stages(events, config)
     positions = stages["mapping"]["positions"]
     notes = sorted((round(k[0], 3), k[1], *v) for k, v in positions.items())
-    return {"tab_notes": len(notes), "notes": notes}
+
+    # Score the tab against the known tab: a truth note counts when a mapped
+    # note of the same pitch starts within SOLO_MATCH_S of it.
+    spb, offset = _fit_solo_truth(events)
+    mapped = [(k[0], pretty_midi.note_name_to_number(k[1])) for k in positions]
+    used, hits, complete = set(), 0, 0
+    for beat, truth_notes in SOLO_TRUTH:
+        t = offset + beat * spb
+        column_hits = 0
+        for m in truth_notes:
+            match = next((i for i, (s, p) in enumerate(mapped)
+                          if i not in used and p == m and abs(s - t) <= SOLO_MATCH_S), None)
+            if match is not None:
+                used.add(match)
+                column_hits += 1
+        hits += column_hits
+        complete += column_hits == len(truth_notes)
+    total = sum(len(n) for _, n in SOLO_TRUTH)
+    return {
+        "tab_notes": len(notes),
+        "notes": notes,
+        "recall": round(hits / total, 3),
+        "precision": round(len(used) / len(mapped), 3) if mapped else None,
+        "complete_columns": complete,
+        "columns": len(SOLO_TRUTH),
+        "alignment": {"seconds_per_beat": round(spb, 3), "offset": round(offset, 2)},
+    }
 
 
 def run_all(config: StageConfig) -> dict:
@@ -89,9 +148,13 @@ def run_all(config: StageConfig) -> dict:
             "solo": _solo(config)}
 
 
-def _solo_diff(base: dict, cur: dict) -> str:
-    b, c = {tuple(n) for n in base["notes"]}, {tuple(n) for n in cur["notes"]}
-    return f"{cur['tab_notes']} notes (+{len(c - b)} / -{len(b - c)} vs baseline)"
+def _solo_diff(base: dict | None, cur: dict) -> str:
+    text = (f"{cur['tab_notes']} tab notes; vs the known tab: recall {cur['recall']:.0%}, precision "
+            f"{cur['precision']:.0%}, complete columns {cur['complete_columns']}/{cur['columns']}")
+    if base and "recall" in base:
+        text += (f"  [baseline {base['recall']:.0%} / {base['precision']:.0%} / "
+                 f"{base['complete_columns']}/{base['columns']}]")
+    return text
 
 
 def print_report(cur: dict, base: dict | None) -> None:
@@ -118,7 +181,7 @@ def print_report(cur: dict, base: dict | None) -> None:
         print(f"    {w:<13} {m['kept']}/{m['events']} | {d(m['tab_notes'], r and r['tab_notes'])} | "
               f"{m['columns']} ({d(m['chord_columns_ge3'], r and r['chord_columns_ge3'])}) | "
               f"{m['mean_notes_per_chord_column']} | {m['mapper_drops']} | {m['retrigger_candidates']}")
-    print(f"  solo clip: {_solo_diff(base['solo'], cur['solo']) if base else str(cur['solo']['tab_notes']) + ' notes'}")
+    print(f"  solo clip: {_solo_diff(base['solo'] if base else None, cur['solo'])}")
 
 
 def _parse_spec(spec: str) -> StageConfig:

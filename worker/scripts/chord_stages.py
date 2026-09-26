@@ -54,6 +54,7 @@ class StageConfig:
     """Post-detection settings. Defaults = what the pipeline does."""
 
     threshold: float = CONFIDENCE_THRESHOLD
+    chord_floor: float = transcribe.CHORD_TONE_CONFIDENCE_FLOOR
 
     def describe(self) -> str:
         return ", ".join(f"{f.name}={getattr(self, f.name)}" for f in dataclasses.fields(self))
@@ -154,7 +155,7 @@ def run_stages(events: list[dict], config: StageConfig = PIPELINE) -> dict:
     mapping (fretboard.map_notes_with_steps). Returns the selected events
     (with "kept" flags), the kept notes, the groups the mapper used, each
     kept note's group index, positions and drop reasons."""
-    selected = sorted(transcribe.select_notes(events, threshold=config.threshold),
+    selected = sorted(transcribe.select_notes(events, threshold=config.threshold, chord_floor=config.chord_floor),
                       key=lambda e: (e["start_time"], e["midi"]))
     kept = [e for e in selected if e["kept"]]
 

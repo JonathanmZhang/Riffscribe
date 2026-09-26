@@ -30,6 +30,9 @@ services:
       - MAX_AUDIO_DURATION_SECONDS=300
       # Also read here: ingest_audio checks it early for isolate_guitar jobs.
       - MAX_SEPARATION_DURATION_SECONDS=120
+      # transcribe: notes >= this also kept when they start with a confident
+      # (>= 0.5) note, i.e. chord tones; >= 0.5 disables.
+      - CHORD_TONE_CONFIDENCE_FLOOR=0.45
     depends_on:
       - redis
     volumes:
