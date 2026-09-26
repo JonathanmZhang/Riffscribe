@@ -101,7 +101,22 @@ def evaluate_program(truth: dict, wav_path: str, separate: bool = False, seed: i
         rs = [r for r in results if section_prefix is None or r["section"].startswith(section_prefix)]
         return round(100 * sum(r["complete"] for r in rs) / len(rs), 1)
 
+    def section_stats(prefix: str) -> dict:
+        """Recall/precision/completeness for one section. Precision here is
+        over tab notes attributed to that section's chords (correct chord
+        notes vs mapped extras), so unattributed notes don't count."""
+        rs = [r for r in results if r["section"].startswith(prefix)]
+        expected = sum(r["funnel"]["expected"] for r in rs)
+        correct = sum(1 for r in rs for n in r["notes"] if n.get("in_tab"))
+        extra = sum(1 for r in rs for x in r["extras"] if x["mapped"])
+        return {
+            "recall": round(sum(r["funnel"]["mapped"] for r in rs) / expected, 3),
+            "precision": round(correct / (correct + extra), 3) if correct + extra else None,
+            "complete_pct": round(100 * sum(r["complete"] for r in rs) / len(rs), 1),
+        }
+
     summary = {
+        "sections": {"sustained": section_stats("sustained"), "fast": section_stats("fast")},
         "program": truth["program"],
         "program_name": truth["program_name"],
         "chords": len(results),

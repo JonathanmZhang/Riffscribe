@@ -74,6 +74,7 @@ def _synthetic(config: StageConfig) -> dict:
             "clean_pct": s["clean_pct"],
             "extras_in_tab": s["extras_in_tab"],
             "losses_by_stage": s["losses_by_stage"],
+            "fast": s["sections"]["fast"],
         }
         repeats_json = os.path.join(TESTSET, f"repeats_prog{truth['program']}.json")
         if os.path.exists(repeats_json):
