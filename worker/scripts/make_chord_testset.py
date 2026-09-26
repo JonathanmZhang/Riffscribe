@@ -16,6 +16,10 @@ Electric Guitar (jazz)).
 Layout: 1s of silence, then each chord below strummed once (notes 10-25ms
 apart, low to high), held 1.0s with a 0.25s gap; then a fast progression at
 4 chords per second.
+
+Also writes repeats_prog<N>.wav/.json: intentionally repeated notes (eighth
+notes at 120 and 160bpm, power-chord chugs, palm-mute-style short notes),
+each a separate attack, as a guard against over-merging re-triggers.
 """
 
 import argparse
@@ -91,16 +95,60 @@ def build_score(seed: int) -> list[dict]:
     return chords
 
 
-def render(chords: list[dict], program: int, out_dir: str) -> str:
+# Intentionally repeated notes, as a guard for re-trigger merging: each
+# pattern's notes are separate attacks that must stay separate in the tab.
+# (name, MIDI notes struck together, bpm, count, note length as a fraction of
+# the eighth-note spacing)
+REPEAT_PATTERNS = [
+    ("E2 eighths @120bpm", [40], 120, 8, 0.9),
+    ("A2 eighths @160bpm", [45], 160, 8, 0.9),
+    ("B3 eighths @120bpm", [59], 120, 8, 0.9),
+    ("E5 chugs @160bpm", [40, 47], 160, 8, 0.9),
+    ("E2 palm-mute-style @160bpm", [40], 160, 8, 0.32),  # ~60ms notes
+]
+
+
+def build_repeats(seed: int) -> list[dict]:
+    rng = np.random.default_rng(seed + 1)
+    notes = []
+    t = LEAD_IN_S
+    for name, pitches, bpm, count, length in REPEAT_PATTERNS:
+        spacing = 60.0 / bpm / 2  # eighth notes
+        for i in range(count):
+            onset = t + i * spacing
+            for pitch in pitches:
+                notes.append({
+                    "pattern": name,
+                    "midi": pitch,
+                    "pitch": pretty_midi.note_number_to_name(pitch),
+                    "onset": round(onset, 4),
+                    "end": round(onset + spacing * length, 4),
+                    "velocity": int(rng.integers(95, 111)),
+                })
+        t += count * spacing + 0.75
+    return notes
+
+
+def render_notes(notes: list[tuple[int, float, float, int]], program: int, wav_path: str) -> str:
+    """notes: (pitch, start, end, velocity)."""
     midi = pretty_midi.PrettyMIDI(initial_tempo=120)
     guitar = pretty_midi.Instrument(program=program, name=PROGRAM_NAMES.get(program, f"program {program}"))
-    for chord in chords:
-        for note, offset, velocity in zip(chord["notes"], chord["strum_offsets_ms"], chord["velocities"]):
-            guitar.notes.append(pretty_midi.Note(
-                velocity=velocity, pitch=note, start=chord["onset"] + offset / 1000.0, end=chord["end"]))
+    for pitch, start, end, velocity in notes:
+        guitar.notes.append(pretty_midi.Note(velocity=velocity, pitch=pitch, start=start, end=end))
     midi.instruments.append(guitar)
+    return _render_midi(midi, wav_path)
 
-    wav_path = os.path.join(out_dir, f"chords_prog{program}.wav")
+
+def render(chords: list[dict], program: int, out_dir: str) -> str:
+    notes = [
+        (note, chord["onset"] + offset / 1000.0, chord["end"], velocity)
+        for chord in chords
+        for note, offset, velocity in zip(chord["notes"], chord["strum_offsets_ms"], chord["velocities"])
+    ]
+    return render_notes(notes, program, os.path.join(out_dir, f"chords_prog{program}.wav"))
+
+
+def _render_midi(midi: pretty_midi.PrettyMIDI, wav_path: str) -> str:
     with tempfile.TemporaryDirectory() as workdir:
         mid_path = os.path.join(workdir, "chords.mid")
         midi.write(mid_path)
@@ -140,6 +188,18 @@ def main() -> None:
             json.dump(truth, f, indent=2)
         print(f"program {program} ({truth['program_name']}): {wav_path}, {len(audio) / sr:.1f}s, "
               f"peak {np.abs(audio).max():.2f}, {len(chords)} chords")
+
+        # Repeated-note guard set (separate file, so the chord set is unchanged).
+        repeats = build_repeats(args.seed)
+        wav_path = render_notes([(n["midi"], n["onset"], n["end"], n["velocity"]) for n in repeats],
+                                program, os.path.join(args.out, f"repeats_prog{program}.wav"))
+        audio, sr = sf.read(wav_path)
+        with open(os.path.join(args.out, f"repeats_prog{program}.json"), "w") as f:
+            json.dump({"wav": os.path.basename(wav_path), "program": program,
+                       "program_name": truth["program_name"], "sample_rate": sr, "seed": args.seed,
+                       "patterns": [p[0] for p in REPEAT_PATTERNS], "notes": repeats}, f, indent=2)
+        print(f"  repeats: {wav_path}, {len(audio) / sr:.1f}s, peak {np.abs(audio).max():.2f}, "
+              f"{len(repeats)} notes in {len(REPEAT_PATTERNS)} patterns")
 
 
 if __name__ == "__main__":

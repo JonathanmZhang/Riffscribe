@@ -36,6 +36,8 @@ import json  # noqa: E402
 import tempfile  # noqa: E402
 import time  # noqa: E402
 
+import pretty_midi  # noqa: E402
+
 from scripts.chord_stages import (  # noqa: E402
     CHORD_ONSET_TOLERANCE_SECONDS,
     PIPELINE,
@@ -119,6 +121,41 @@ def evaluate_program(truth: dict, wav_path: str, separate: bool = False, seed: i
         "total_seconds": round(time.perf_counter() - start_time, 1),
     }
     return {"summary": summary, "chords": results}
+
+
+REPEAT_MATCH_S = 0.08  # < half the 160bpm eighth-note spacing (0.1875s)
+
+
+def evaluate_repeats(truth: dict, wav_path: str, config: StageConfig = PIPELINE) -> dict:
+    """Guard for re-trigger merging: every intentionally repeated note in the
+    repeats test set should appear as its own note in the tab. A truth note
+    counts when a mapped note of the same pitch starts within REPEAT_MATCH_S
+    of it; mapped notes of a pattern's pitches that match nothing are extras."""
+    with tempfile.TemporaryDirectory() as workdir:
+        events, _, _ = detect_file(wav_path, workdir)
+    stages = run_stages(events, config)
+    mapped = sorted((k[0], pretty_midi.note_name_to_number(k[1])) for k in stages["mapping"]["positions"])
+    used: set[int] = set()
+    patterns: dict[str, dict] = {}
+    for note in truth["notes"]:
+        p = patterns.setdefault(note["pattern"], {"expected": 0, "separate_in_tab": 0, "extras": 0,
+                                                  "pitches": set(), "span": [note["onset"], note["end"]]})
+        p["expected"] += 1
+        p["pitches"].add(note["midi"])
+        p["span"][1] = note["end"]
+        match = next((i for i, (s, m) in enumerate(mapped)
+                      if i not in used and m == note["midi"] and abs(s - note["onset"]) <= REPEAT_MATCH_S), None)
+        if match is not None:
+            used.add(match)
+            p["separate_in_tab"] += 1
+    for p in patterns.values():
+        lo, hi = p["span"][0] - REPEAT_MATCH_S, p["span"][1] + 0.3
+        p["extras"] = sum(1 for i, (s, m) in enumerate(mapped) if i not in used and m in p["pitches"] and lo <= s < hi)
+        p["pitches"] = sorted(p["pitches"])
+    expected = sum(p["expected"] for p in patterns.values())
+    kept = sum(p["separate_in_tab"] for p in patterns.values())
+    return {"recall": round(kept / expected, 3), "expected": expected, "separate_in_tab": kept,
+            "extras": sum(p["extras"] for p in patterns.values()), "patterns": patterns}
 
 
 def _print_summary(programs: dict, separate: bool, config: StageConfig = PIPELINE) -> None:

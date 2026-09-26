@@ -39,7 +39,7 @@ from scripts.chord_stages import (  # noqa: E402
     run_stages,
     window_metrics,
 )
-from scripts.eval_chords import evaluate_program  # noqa: E402
+from scripts.eval_chords import evaluate_program, evaluate_repeats  # noqa: E402
 
 TESTSET = "/app/data/_testaudio/chord_testset"
 FIREFIRE = "/app/data/_testaudio/firefire.webm"
@@ -75,6 +75,15 @@ def _synthetic(config: StageConfig) -> dict:
             "extras_in_tab": s["extras_in_tab"],
             "losses_by_stage": s["losses_by_stage"],
         }
+        repeats_json = os.path.join(TESTSET, f"repeats_prog{truth['program']}.json")
+        if os.path.exists(repeats_json):
+            rt = json.load(open(repeats_json))
+            r = evaluate_repeats(rt, os.path.join(TESTSET, rt["wav"]), config)
+            out[str(truth["program"])]["repeats"] = {
+                "recall": r["recall"], "extras": r["extras"],
+                "by_pattern": {k: f"{v['separate_in_tab']}/{v['expected']} (+{v['extras']})"
+                               for k, v in r["patterns"].items()},
+            }
     return out
 
 
@@ -174,6 +183,10 @@ def print_report(cur: dict, base: dict | None) -> None:
               f"{d(s['precision'], r and r['precision'], True)} | "
               f"{d(s['complete_pct'], r and r['complete_pct'])} ({d(s['complete_pct_fast'], r and r['complete_pct_fast'])}) | "
               f"{d(s['extras_in_tab'], r and r['extras_in_tab'])} | {lost}")
+        if "repeats" in s:
+            rr = r.get("repeats") if r else None
+            print(f"      repeated notes kept separate: {d(s['repeats']['recall'], rr and rr['recall'], True)}, "
+                  f"extras {s['repeats']['extras']} | " + ", ".join(f"{k}: {v}" for k, v in s["repeats"]["by_pattern"].items()))
     print("  firefire windows: kept/events | tab notes | columns (>=3-note) | mean notes per >=3 column | "
           "mapper drops | retrigger candidates")
     for w, m in cur["firefire"].items():
