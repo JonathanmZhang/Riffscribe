@@ -25,29 +25,79 @@ Transcription is slow (ML inference plus a search over fretboard positions), so 
 
 ## Running locally
 
-**Prerequisites:** [Docker Desktop](https://www.docker.com/products/docker-desktop/) (or Docker Engine with the Compose plugin). Nothing else needs to be installed on the host.
+Everything runs in Docker. You don't need Python, Node.js or any ML libraries on your machine.
 
-```bash
-git clone https://github.com/JonathanmZhang/Riffscribe.git
-cd Riffscribe
-docker compose up -d --build
-```
+### Prerequisites
 
-| Service  | URL / port              |
-|----------|-------------------------|
-| Frontend | http://localhost:3000   |
-| API      | http://localhost:8000 (interactive docs at `/docs`) |
-| Redis    | localhost:6379          |
+- **[Docker Desktop](https://www.docker.com/products/docker-desktop/), installed and running.** On Linux, Docker Engine with the Compose plugin works too. Check that Docker is up with `docker compose version`, which should print a version and not an error.
+- **About 10 GB of free disk space.** The built images total about 4.8 GB, and the build needs working space on top of that. Nearly all of it is the worker image (4.1 GB), because Basic Pitch depends on TensorFlow.
+- **Ports 3000, 8000 and 6379 free.** 6379 is Redis, so stop any local Redis first.
+- **Git**, to clone the repo.
 
-Open http://localhost:3000, then upload a `.mp3`, `.wav` or `.m4a` file or paste a link.
+Tested on Windows 11 with Docker Desktop (WSL 2).
 
-The first job after a fresh start takes noticeably longer. That's the one-time cost of loading the Basic Pitch model (~20 s) and warming up librosa's numba JIT compiler (~30 s), not a hang. Later jobs skip it.
+### Steps
 
-Uploaded and normalized audio is stored in `./data/{job_id}/` on the host.
+1. Clone the repository:
+   ```bash
+   git clone https://github.com/JonathanmZhang/Riffscribe.git
+   ```
+2. Move into it:
+   ```bash
+   cd Riffscribe
+   ```
+3. Build and start all four services (frontend, API, worker, Redis):
+   ```bash
+   docker compose up -d --build
+   ```
+   The first build downloads and installs every dependency. **Expect roughly 5–15 minutes, longer on a slow connection.** Most of that is the worker image's TensorFlow install, during which the output can sit on one step for several minutes. That's normal. Later starts reuse the built images and take seconds.
+4. Check that all four containers are running:
+   ```bash
+   docker compose ps
+   ```
+   You should see `backend`, `frontend`, `redis` and `worker`, each with status `Up`. The API takes a second or two to start accepting requests after its container starts.
+5. Open **http://localhost:3000** in your browser.
+
+| Service  | Address |
+|----------|---------|
+| Frontend | http://localhost:3000 |
+| API      | http://localhost:8000 (interactive docs at http://localhost:8000/docs) |
+| Redis    | localhost:6379 |
+
+To stop everything, run `docker compose down`. Uploaded and normalized audio is kept in `./data/{job_id}/` inside the repo folder.
+
+### What to expect on the first job
+
+**The first job after the stack starts takes about 30–60 seconds, even for a few seconds of audio.** Later jobs on the same audio are much faster. This is a one-time warm-up, not a hang:
+
+- librosa compiles its audio code the first time it's used.
+- Basic Pitch loads its model into memory.
+
+Both happen once per worker container. In testing, an 8-second clip took 47 s on a fresh worker and 8 s on the next run. The status badge shows `processing` during the wait. To watch the worker live, run `docker compose logs -f worker`.
+
+### Try it
+
+For a first run, use this 8-second public-domain guitar clip from Wikimedia Commons ([file page](https://commons.wikimedia.org/wiki/File:Guitar_tabulature_sample.ogg)):
+
+1. On http://localhost:3000, choose **Paste URL**.
+2. Paste the clip's direct link:
+   ```
+   https://upload.wikimedia.org/wikipedia/commons/0/08/Guitar_tabulature_sample.ogg
+   ```
+3. Click **Transcribe**. When the status turns `done`, a tab of about three dozen notes appears. Press play, and the notes being played highlight as the audio plays.
+
+The link has to go through **Paste URL**, because file uploads only accept `.mp3`, `.wav` and `.m4a` and this clip is `.ogg`.
+
+After that, try your own audio:
+
+- **Upload file:** an `.mp3`, `.wav` or `.m4a`, up to 15 MB and 5 minutes long.
+- **Paste URL:** a YouTube or SoundCloud link, or any direct link to an audio file.
+
+Clean, solo guitar gives the best results. A short instrumental clip without drums or vocals is a good choice. In a full band mix, other instruments show up as extra notes. See [Known limitations](#known-limitations).
 
 ### Configuration
 
-`docker-compose.yml` sets these for local development. The frontend container serves a production build of the app, not a dev server. They're only needed when deploying the services separately.
+You don't need to change anything to run locally: `docker-compose.yml` already sets these to the local values. They matter when you deploy the services separately. The frontend container serves a production build of the app, not a dev server.
 
 | Variable | Service | Default | Purpose |
 |----------|---------|---------|---------|
