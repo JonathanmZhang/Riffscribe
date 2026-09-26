@@ -33,10 +33,6 @@ services:
       # transcribe: notes >= this also kept when they start with a confident
       # (>= 0.5) note, i.e. chord tones; >= 0.5 disables.
       - CHORD_TONE_CONFIDENCE_FLOOR=0.45
-      # transcribe: merge same-pitch re-triggers (gap <= this, and a weak
-      # attack below the onset gate) into one note; empty gap disables.
-      - RETRIGGER_MERGE_GAP_SECONDS=0.04
-      - RETRIGGER_MAX_ONSET_ACTIVATION=0.6
     depends_on:
       - redis
     volumes:

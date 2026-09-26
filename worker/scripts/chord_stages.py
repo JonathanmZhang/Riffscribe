@@ -55,8 +55,6 @@ class StageConfig:
 
     threshold: float = CONFIDENCE_THRESHOLD
     chord_floor: float = transcribe.CHORD_TONE_CONFIDENCE_FLOOR
-    merge_gap: float | None = transcribe.RETRIGGER_MERGE_GAP_SECONDS
-    merge_max_onset: float = transcribe.RETRIGGER_MAX_ONSET_ACTIVATION
 
     def describe(self) -> str:
         return ", ".join(f"{f.name}={getattr(self, f.name)}" for f in dataclasses.fields(self))
@@ -101,8 +99,7 @@ def _cache_key(input_path: str, separate: bool, seed: int) -> str:
     with open(input_path, "rb") as f:
         for chunk in iter(lambda: f.read(1 << 20), b""):
             digest.update(chunk)
-    # "v2": events carry onset_activation (added with re-trigger merging).
-    digest.update(f"|v2|sep={separate}|seed={seed}|bp={importlib.metadata.version('basic-pitch')}".encode())
+    digest.update(f"|sep={separate}|seed={seed}|bp={importlib.metadata.version('basic-pitch')}".encode())
     if separate:
         digest.update(f"|{DEMUCS_MODEL}|shifts={DEMUCS_SHIFTS}|torch={torch.__version__}".encode())
     return digest.hexdigest()[:20]
@@ -158,8 +155,7 @@ def run_stages(events: list[dict], config: StageConfig = PIPELINE) -> dict:
     mapping (fretboard.map_notes_with_steps). Returns the selected events
     (with "kept" flags), the kept notes, the groups the mapper used, each
     kept note's group index, positions and drop reasons."""
-    selected = sorted(transcribe.select_notes(events, threshold=config.threshold, chord_floor=config.chord_floor,
-                                              merge_gap=config.merge_gap, merge_max_onset=config.merge_max_onset),
+    selected = sorted(transcribe.select_notes(events, threshold=config.threshold, chord_floor=config.chord_floor),
                       key=lambda e: (e["start_time"], e["midi"]))
     kept = [e for e in selected if e["kept"]]
 
