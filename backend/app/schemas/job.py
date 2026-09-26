@@ -1,5 +1,5 @@
 from enum import Enum
-from typing import Optional
+from typing import Literal, Optional
 
 from pydantic import BaseModel
 
@@ -13,6 +13,12 @@ class JobStatus(str, Enum):
     failed = "failed"
 
 
+# Which pipeline task is running (set by each worker task when it starts).
+# Separate from status, which stays the fixed four-value enum. None when
+# queued or done; left at the failing stage when a job fails.
+JobStage = Literal["ingesting", "separating", "transcribing", "mapping"]
+
+
 class JobCreateResponse(BaseModel):
     job_id: str
     status: JobStatus
@@ -23,6 +29,10 @@ class JobStatusResponse(BaseModel):
     status: JobStatus
     error: Optional[str] = None
     result: Optional[TabResult] = None
+    isolate_guitar: bool = False
+    stage: Optional[JobStage] = None
+    # True once the separated guitar stem exists; served by GET /jobs/{id}/stem.
+    stem_available: bool = False
 
 
 class JobRecord(BaseModel):
@@ -32,3 +42,4 @@ class JobRecord(BaseModel):
     status: JobStatus
     error: Optional[str] = None
     result: Optional[TabResult] = None
+    isolate_guitar: bool = False

@@ -24,17 +24,30 @@ redis_client = redis.from_url(REDIS_URL, decode_responses=True)
 celery_client = Celery("riffscribe-client", broker=CELERY_BROKER_URL, backend=CELERY_RESULT_BACKEND)
 
 
-def _enqueue_pipeline(job_id: str, source: dict) -> None:
-    workflow = chain(
-        signature("ingest_audio", args=(job_id, source), app=celery_client, immutable=True),
+def _enqueue_pipeline(job_id: str, source: dict, isolate_guitar: bool) -> None:
+    steps = [signature("ingest_audio", args=(job_id, source), app=celery_client, immutable=True)]
+    if isolate_guitar:
+        # Its own queue, served one job at a time by the worker-separation
+        # service (Demucs needs ~3GB RAM per run).
+        steps.append(
+            signature("separate_guitar", args=(job_id,), app=celery_client, immutable=True, queue="separation")
+        )
+    steps += [
         signature("transcribe", args=(job_id,), app=celery_client, immutable=True),
         signature("map_fretboard", args=(job_id,), app=celery_client, immutable=True),
-    )
-    workflow.apply_async()
+    ]
+    chain(*steps).apply_async()
 
 
 def _job_key(job_id: str) -> str:
     return f"job:{job_id}"
+
+
+TRUTHY_FORM_VALUES = {"true", "1", "on"}
+
+
+def _existing_file(path: str | None) -> str | None:
+    return path if path and os.path.isfile(path) else None
 
 
 @router.post("", response_model=JobCreateResponse, status_code=status.HTTP_202_ACCEPTED)
@@ -66,6 +79,8 @@ async def create_job(request: Request) -> JobCreateResponse:
             f.write(contents)
 
         source = {"type": "file", "path": saved_path}
+        # Checkbox-style form field: "true"/"1"/"on" (any case) enable it.
+        isolate_guitar = str(form.get("isolate_guitar", "")).strip().lower() in TRUTHY_FORM_VALUES
 
     elif content_type.startswith("application/json"):
         body = await request.json()
@@ -74,6 +89,9 @@ async def create_job(request: Request) -> JobCreateResponse:
             raise HTTPException(status_code=422, detail="A 'url' field is required")
 
         source = {"type": "url", "url": url}
+        isolate_guitar = body.get("isolate_guitar", False)
+        if not isinstance(isolate_guitar, bool):
+            raise HTTPException(status_code=422, detail="'isolate_guitar' must be a boolean")
 
     else:
         raise HTTPException(
@@ -81,10 +99,10 @@ async def create_job(request: Request) -> JobCreateResponse:
             detail="Content-Type must be multipart/form-data (file upload) or application/json ({'url': ...})",
         )
 
-    job = JobRecord(job_id=job_id, status=JobStatus.queued, error=None, result=None)
+    job = JobRecord(job_id=job_id, status=JobStatus.queued, error=None, result=None, isolate_guitar=isolate_guitar)
     await redis_client.set(_job_key(job_id), job.model_dump_json())
 
-    _enqueue_pipeline(job_id, source)
+    _enqueue_pipeline(job_id, source, isolate_guitar)
 
     return JobCreateResponse(job_id=job_id, status=JobStatus.queued)
 
@@ -96,7 +114,18 @@ async def get_job(job_id: str) -> JobStatusResponse:
         raise HTTPException(status_code=404, detail="Job not found")
 
     job = JobRecord.model_validate_json(raw)
-    return JobStatusResponse(job_id=job.job_id, status=job.status, error=job.error, result=job.result)
+    # stage and stem_audio_path are written by the worker and aren't part of
+    # JobRecord, so read them from the raw stored dict (as get_job_audio does).
+    job_data = json.loads(raw)
+    return JobStatusResponse(
+        job_id=job.job_id,
+        status=job.status,
+        error=job.error,
+        result=job.result,
+        isolate_guitar=job.isolate_guitar,
+        stage=job_data.get("stage"),
+        stem_available=_existing_file(job_data.get("stem_audio_path")) is not None,
+    )
 
 
 @router.get("/{job_id}/audio")
@@ -114,3 +143,18 @@ async def get_job_audio(job_id: str) -> FileResponse:
         raise HTTPException(status_code=404, detail="Audio not available for this job yet")
 
     return FileResponse(audio_path, media_type="audio/wav")
+
+
+@router.get("/{job_id}/stem")
+async def get_job_stem(job_id: str) -> FileResponse:
+    raw = await redis_client.get(_job_key(job_id))
+    if raw is None:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    # stem_audio_path is internal (written by separate_guitar); same raw-dict
+    # read as get_job_audio. Serves the 44.1kHz stereo stem, for playback.
+    stem_path = _existing_file(json.loads(raw).get("stem_audio_path"))
+    if stem_path is None:
+        raise HTTPException(status_code=404, detail="Guitar stem not available for this job")
+
+    return FileResponse(stem_path, media_type="audio/wav")
