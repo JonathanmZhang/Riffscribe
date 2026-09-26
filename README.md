@@ -10,15 +10,17 @@ Transcription is slow (ML inference plus a search over fretboard positions), so 
  Next.js UI ──POST /jobs──▶ FastAPI ──enqueue──▶ Redis (broker + job state)
      ▲                         │                        │
      │                         │                        ▼
-     └──GET /jobs/{id} (poll)──┘            Celery worker: 3 chained tasks
+     └──GET /jobs/{id} (poll)──┘            Celery workers: chained tasks
         GET /jobs/{id}/audio                  1. ingest_audio
-                                              2. transcribe     (Basic Pitch)
-                                              3. map_fretboard  (DP search)
+        GET /jobs/{id}/stem                  (2. separate_guitar  (Demucs), optional)
+                                              3. transcribe     (Basic Pitch)
+                                              4. map_fretboard  (DP search)
 ```
 
 1. **FastAPI** (`backend/`) validates the upload or URL, creates a `job:{job_id}` record in Redis with status `queued`, enqueues the pipeline, and returns `202 Accepted` right away.
-2. **Celery + Redis** (`worker/`) runs three separate chained tasks. Tasks don't pass return values to each other: each one reads and writes shared job state in Redis by `job_id`. Each task sets `processing` when it starts. Any exception marks the job `failed` with an error message naming the stage, so a job never fails silently.
+2. **Celery + Redis** (`worker/`) runs separate chained tasks. Tasks don't pass return values to each other: each one reads and writes shared job state in Redis by `job_id`. Each task sets `processing` and its pipeline `stage` when it starts. Any exception marks the job `failed` with an error message naming the stage, so a job never fails silently.
    - **`ingest_audio`** downloads URLs with yt-dlp, then normalizes every input to a mono, 22.05 kHz WAV with librosa.
+   - **`separate_guitar`** runs only when the job was submitted with **Isolate guitar**. It separates the guitar from the original (full-rate, stereo) source with Demucs' `htdemucs_6s` model on the CPU, and the guitar stem is then transcribed instead of the full mix. Separation needs a lot of memory, so it runs on its own `separation` queue, served one job at a time by a dedicated `worker-separation` service. It's also slow: in testing it took about 2–4 seconds per second of audio on an 8-core machine.
    - **`transcribe`** runs Spotify's [Basic Pitch](https://github.com/spotify/basic-pitch) for polyphonic pitch detection. Notes below the confidence threshold (0.5 by default) are discarded. It also estimates the tempo with librosa's beat tracker.
    - **`map_fretboard`** assigns every note a (string, fret) position. Notes whose onsets fall within 150 ms of each other are grouped into one chord. A Viterbi-style dynamic program then picks the lowest-cost path through all candidate positions for the whole piece, rather than choosing each note greedily. The cost of a move is fret-hand travel, plus a penalty for stretches wider than 4 frets and for staying on the same string, minus a bonus for open strings. When two paths tie, the one lower on the neck wins. Chords are voiced onto distinct strings.
 3. **Next.js** (`frontend/`) submits the job, polls its status, and renders the result two ways: a string-by-fret tab grid and a per-note detail table. Both highlight the notes sounding at the current playback position of an `<audio>` element that streams the job's normalized audio. Seeking works because the audio endpoint supports HTTP Range requests. For practice, playback can be slowed to 0.75x or 0.5x, and the highlighting stays in sync because it follows the audio's own playback position.
@@ -30,7 +32,8 @@ Everything runs in Docker. You don't need Python, Node.js or any ML libraries on
 ### Prerequisites
 
 - **[Docker Desktop](https://www.docker.com/products/docker-desktop/), installed and running.** On Linux, Docker Engine with the Compose plugin works too. Check that Docker is up with `docker compose version`, which should print a version and not an error.
-- **About 10 GB of free disk space.** The built images total about 4.8 GB, and the build needs working space on top of that. Nearly all of it is the worker image (4.1 GB), because Basic Pitch depends on TensorFlow.
+- **About 12 GB of free disk space.** The built images total about 6 GB, and the build needs working space on top of that. Nearly all of it is the worker image (5.3 GB): Basic Pitch depends on TensorFlow, and guitar separation adds PyTorch and the Demucs model. The two worker services share the same image.
+- **About 4 GB of memory available to Docker** if you use **Isolate guitar**. A separation peaked at about 2 GB in testing, on top of the other services.
 - **Ports 3000, 8000 and 6379 free.** 6379 is Redis, so stop any local Redis first.
 - **Git**, to clone the repo.
 
@@ -46,16 +49,16 @@ Tested on Windows 11 with Docker Desktop (WSL 2).
    ```bash
    cd Riffscribe
    ```
-3. Build and start all four services (frontend, API, worker, Redis):
+3. Build and start all five services (frontend, API, the main worker, the separation worker, Redis):
    ```bash
    docker compose up -d --build
    ```
-   The first build downloads and installs every dependency. **Expect roughly 5–15 minutes, longer on a slow connection.** Most of that is the worker image's TensorFlow install, during which the output can sit on one step for several minutes. That's normal. Later starts reuse the built images and take seconds.
-4. Check that all four containers are running:
+   The first build downloads and installs every dependency. **Expect roughly 5–15 minutes, longer on a slow connection.** Most of that is the worker image's TensorFlow and PyTorch installs, during which the output can sit on one step for several minutes. That's normal. Later starts reuse the built images and take seconds.
+4. Check that all five containers are running:
    ```bash
    docker compose ps
    ```
-   You should see `backend`, `frontend`, `redis` and `worker`, each with status `Up`. The API takes a second or two to start accepting requests after its container starts.
+   You should see `backend`, `frontend`, `redis`, `worker` and `worker-separation`, each with status `Up`. The API takes a second or two to start accepting requests after its container starts.
 5. Open **http://localhost:3000** in your browser.
 
 | Service  | Address |
@@ -105,6 +108,10 @@ You don't need to change anything to run locally: `docker-compose.yml` already s
 | `NEXT_PUBLIC_ENABLE_URL_INGESTION` | frontend | `true` | Set to `false` to hide link submission in the UI (file upload only). The API still accepts URLs. |
 | `CORS_ALLOWED_ORIGINS` | backend | `http://localhost:3000` | Comma-separated list of allowed frontend origins. Wildcards are rejected. |
 | `MAX_AUDIO_DURATION_SECONDS` | worker | `300` | Longest audio accepted |
+| `DEMUCS_MODEL` | worker-separation | `htdemucs_6s` | Separation model. Must have a guitar stem. Only the default's weights are built into the image. |
+| `DEMUCS_SHIFTS` | worker-separation | `1` | Demucs shift passes. Higher is slightly better and proportionally slower. |
+| `MAX_SEPARATION_DURATION_SECONDS` | worker-separation | `180` | Longest audio accepted with **Isolate guitar**. Longer audio fails at the separating stage with a clear message. |
+| `SEPARATION_SOFT_TIME_LIMIT_SECONDS` | worker-separation | `900` | Time limit for the separation task. The other tasks keep 120 s. |
 
 The `NEXT_PUBLIC_*` values are built into the frontend at build time, so they're Docker build arguments rather than runtime environment variables. After changing one, rebuild with `docker compose up -d --build frontend`, or redeploy on a host such as Vercel.
 
@@ -112,9 +119,10 @@ The `NEXT_PUBLIC_*` values are built into the frontend at build time, so they're
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `POST` | `/jobs` | Submit a job. Send either `multipart/form-data` with a `file` field (`.mp3`/`.wav`/`.m4a`, max 15 MB) or JSON `{"url": "..."}`. Returns `202` with `{"job_id": "...", "status": "queued"}`. Invalid input returns `422`. |
-| `GET` | `/jobs/{job_id}` | Returns `{job_id, status, error, result}`. `status` is always one of `queued`, `processing`, `done` or `failed`. `result` is filled in only when `done`, and `error` only when `failed`. Unknown IDs return `404`. |
+| `POST` | `/jobs` | Submit a job. Send either `multipart/form-data` with a `file` field (`.mp3`/`.wav`/`.m4a`, max 15 MB) or JSON `{"url": "..."}`. Add `isolate_guitar` to separate the guitar first: a form field set to `true`, `1` or `on`, or `"isolate_guitar": true` in the JSON. It defaults to off. Returns `202` with `{"job_id": "...", "status": "queued"}`. Invalid input returns `422`. |
+| `GET` | `/jobs/{job_id}` | Returns `{job_id, status, error, result, isolate_guitar, stage, stem_available}`. `status` is always one of `queued`, `processing`, `done` or `failed`. `stage` names the running step (`ingesting`, `separating`, `transcribing`, `mapping`). `stem_available` turns true once a guitar stem exists. `result` is filled in only when `done`, and `error` only when `failed`. Unknown IDs return `404`. |
 | `GET` | `/jobs/{job_id}/audio` | Streams the job's normalized WAV (`audio/wav`) and supports Range requests for seeking. Returns `404` if the job doesn't exist or its audio hasn't been produced yet. |
+| `GET` | `/jobs/{job_id}/stem` | Streams the separated guitar stem (44.1 kHz stereo WAV), with Range support. Returns `404` unless the job ran with `isolate_guitar` and separation has finished. |
 
 A finished `result` looks like this:
 

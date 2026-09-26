@@ -36,6 +36,19 @@ Chained via Celery's chain() with immutable=True on each signature —
 tasks read/write job state via job_id in Redis, they do NOT pass return
 values to each other. Don't remove immutable=True.
 
+Optional 4th task, separate_guitar (tasks/separate.py), runs between
+ingest_audio and transcribe ONLY when the job has isolate_guitar=true;
+with it off the chain is exactly the three tasks above. It's routed to
+the "separation" queue (set explicitly on the backend's signature and in
+celery_app task_routes), served by the worker-separation compose service
+at --concurrency 1. The main worker serves only the default "celery"
+queue at --concurrency 2. Keep separation off the main worker.
+
+Each task sets a `stage` field at start (ingesting | separating |
+transcribing | mapping); map_fretboard clears it on done, and a failed
+job keeps the stage it failed in. `stage` is NOT a status value — status
+stays the fixed four-value enum.
+
 ## Conventions
 - Pydantic models for all request/response schemas, in app/schemas/
 - Time in the tab JSON output is stored in raw seconds, not beats/measures
@@ -47,7 +60,16 @@ values to each other. Don't remove immutable=True.
 - Shared audio/data files live under /app/data/{job_id}/ inside containers
   (mounted from ./data on the host via docker-compose volumes)
 - Internal intermediate pipeline data (e.g. raw_note_events) stays out
-  of the public TabResult schema
+  of the public TabResult schema. Other internal job fields:
+  source_audio_path / source_duration_seconds (ingest), stem_audio_path /
+  transcription_audio_path / separation_seconds (separate_guitar).
+  transcribe reads transcription_audio_path if set, else
+  normalized_audio_path. The API exposes only stage, isolate_guitar and
+  stem_available (plus GET /jobs/{id}/stem), read from the raw dict.
+- Pure, Redis/Celery-free helpers for scripts: tasks/audio_io.py
+  (job_dir, probe_duration_seconds, normalize_to_wav),
+  transcribe.extract_notes, separate.separate_guitar_stem,
+  fretboard.map_notes_to_positions. scripts/ab_separation.py uses them.
 - scripts/ is NOT volume-mounted — rebuild the worker image after
   editing anything under worker/scripts/
 - Frontend has a light Tailwind polish pass done (colors, layout, status
@@ -102,6 +124,20 @@ values to each other. Don't remove immutable=True.
   (e.g. D2, C2) dropped, since those pitches don't exist in standard
   tuning's fretboard. This is a known v1 scope limitation, not a bug —
   alternate-tuning support/detection is unimplemented future work.
+- Demucs (guitar separation) is called through its Python API
+  (get_model + apply_model) with librosa/soundfile I/O — never the demucs
+  CLI or torchaudio I/O (Demucs 4.0.1's torchaudio I/O path breaks on
+  recent torchaudio). torch/torchaudio are pinned to 2.5.1 CPU wheels
+  from the PyTorch index in their own Dockerfile layer, and demucs 4.0.1
+  is in worker/requirements-separation.txt — keep them out of
+  requirements.txt so the big TensorFlow layer stays cached. The
+  htdemucs_6s weights are baked into the image (TORCH_HOME=/app/models).
+- Separation runs on the ORIGINAL source (44.1/48kHz stereo), not
+  normalized.wav. It's slow on CPU: real-time factor ~1.6–3.7 measured
+  (varies run to run with machine load), so 180s audio can take ~5-11
+  min against the 900s soft limit. Peak memory ~1.9 GiB for 98s of audio.
+  DEMUCS_SHIFTS>=1 applies a random shift, so the stem, and therefore
+  the note count, varies slightly between runs of the same file.
 - On Windows/Git Bash specifically: `docker compose exec` container
   paths can get mangled by Git Bash's POSIX-path conversion — prefix
   with MSYS_NO_PATHCONV=1.
