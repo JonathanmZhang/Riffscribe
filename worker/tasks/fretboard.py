@@ -301,7 +301,7 @@ def map_notes_to_positions(notes: list[dict]) -> list[dict]:
 @app.task(name="map_fretboard", soft_time_limit=120)
 def map_fretboard(job_id: str) -> str:
     try:
-        update_job(job_id, status="processing")
+        update_job(job_id, status="processing", stage="mapping")
 
         job = get_job(job_id)
         raw_note_events = job.get("raw_note_events")
@@ -325,7 +325,9 @@ def map_fretboard(job_id: str) -> str:
             "notes": mapped_notes,
         }
 
-        update_job(job_id, status="done", result=result)
+        # stage only describes in-progress work, so it's cleared once done. On
+        # failure it's left as-is so the status shows where the job stopped.
+        update_job(job_id, status="done", stage=None, result=result)
         logger.info("map_fretboard: job %s done with %d mapped note(s)", job_id, len(mapped_notes))
     except Exception as exc:
         logger.exception("map_fretboard failed for job %s", job_id)
