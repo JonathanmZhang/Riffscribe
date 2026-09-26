@@ -142,6 +142,25 @@ stays the fixed four-value enum.
   DEMUCS_SHIFTS>=1 applies a random shift, so the stem, and therefore
   the note count, varies slightly between runs of the same file (the
   pipeline doesn't seed it; scripts/ab_separation.py --seed does).
+- Chord accuracy (measured with scripts/eval_chords.py and
+  scripts/regression_check.py: synthetic GM chord set + 3 fixed firefire
+  windows + the tab_sample clip, which has a real known tab). The biggest
+  loss is Basic Pitch giving the quieter tones of a strum 0.35-0.5
+  confidence. transcribe.select_notes keeps a note >=
+  CHORD_TONE_CONFIDENCE_FLOOR (0.45) when a >=0.5 note starts within
+  150ms of it. Lower floors look better on synthetic audio but only add
+  false notes (mostly octave errors) on real guitar - keep 0.45 unless
+  real-audio numbers say otherwise.
+- Tried and reverted (see git history for numbers - don't retry as-is):
+  (1) merging same-pitch "re-triggers": Basic Pitch leaves a 0 gap
+  between consecutive same-pitch notes ~90% of the time for BOTH
+  re-triggers and real repeats, and on real rhythm guitar re-strums look
+  identical to re-triggers on onset activation and amplitude, so merging
+  erases real strums. (2) splitting/gap-based grouping for fast chord
+  changes: no completeness gain, because the affected chords also lose
+  notes at detection/threshold. Backend grouping must stay identical to
+  TabViewer.tsx's (anchor on first note, 150ms) unless the frontend is
+  changed to use a backend-provided step index.
 - On Windows/Git Bash specifically: `docker compose exec` container
   paths can get mangled by Git Bash's POSIX-path conversion — prefix
   with MSYS_NO_PATHCONV=1.
