@@ -3,13 +3,13 @@ time window of an audio file.
 
 Usage (inside the worker container):
     python -m scripts.inspect_chords <file> <start_s> <end_s> [--separate] [--seed N]
-                                     [--expect NOTES]
+                                     [--expect NOTES] [post-detection settings]
 
 Prints, for note onsets in [start_s, end_s):
-  1. every Basic Pitch note event, including ones the confidence threshold
-     drops (marked), with start, end, pitch, MIDI number and amplitude
-  2. how the pipeline's chord grouping groups the kept notes, with each
-     group's onset spread
+  1. every Basic Pitch note event, including ones the confidence filter
+     removes (marked), with start, end, pitch, MIDI number and amplitude
+  2. how the pipeline groups the kept notes into steps (tab columns), with
+     each group's onset spread
   3. what the fretboard mapper does with each group, including dropped
      notes and why
 With --expect (e.g. "G2,B2,D3,G3,B3,G4" for exact notes, or "G,B,D" for
@@ -18,6 +18,7 @@ using the same (a)-(e) categories as scripts/eval_chords.py.
 
 --separate runs the same analysis on the Demucs guitar stem
 (separate_guitar_stem), seeded with --seed (default 0) for repeatability.
+Post-detection settings (see --help) default to the pipeline's.
 """
 
 import os
@@ -31,20 +32,20 @@ import pretty_midi  # noqa: E402
 
 from scripts.chord_stages import (  # noqa: E402
     CHORD_ONSET_TOLERANCE_SECONDS,
-    CONFIDENCE_THRESHOLD,
+    PIPELINE,
+    StageConfig,
+    add_config_args,
     classify_chord,
-    detect,
-    group,
-    map_with_trace,
+    config_from_args,
+    detect_file,
     note_key,
     onset_spread_ms,
-    prepare_audio,
-    step_index,
+    run_stages,
 )
 
 STAGE_TEXT = {
     "a": "(a) never detected by Basic Pitch",
-    "b": "(b) detected but below threshold",
+    "b": "(b) detected but filtered as low-confidence",
     "c": "(c) grouping",
     "d": "(d) dropped by mapper",
     "ok": "ok, in the tab",
@@ -61,26 +62,22 @@ def parse_expected(spec: str) -> tuple[list[int], bool]:
     return [pretty_midi.note_name_to_number(s + "4") % 12 for s in items], True
 
 
-def inspect(path: str, start: float, end: float, separate: bool, seed: int, expect: str | None) -> dict:
+def inspect(path: str, start: float, end: float, separate: bool = False, seed: int = 0,
+            expect: str | None = None, config: StageConfig = PIPELINE) -> dict:
     with tempfile.TemporaryDirectory() as workdir:
-        audio = prepare_audio(path, workdir, separate=separate, seed=seed)
-        events, activations = detect(audio["normalized_path"])
-
-    kept = [e for e in events if e["kept"]]
-    groups = group(kept)
-    step_of = step_index(groups)
-    mapping = map_with_trace(kept)
+        events, activations, _info = detect_file(path, workdir, separate=separate, seed=seed)
+    stages = run_stages(events, config)
+    events, groups, step_of, mapping = stages["events"], stages["groups"], stages["step_of"], stages["mapping"]
     in_window = [e for e in events if start <= e["start_time"] < end]
 
-    source = "separated guitar stem" if separate else "full mix"
-    print(f"\n=== {path}  [{start:.2f}s, {end:.2f}s)  on the {source}"
-          + (f" (separation {audio['separation_seconds']}s, seed {seed})" if separate else ""))
+    source = f"separated guitar stem (seed {seed})" if separate else "full mix"
+    print(f"\n=== {path}  [{start:.2f}s, {end:.2f}s)  on the {source}")
+    print(f"    settings: {config.describe()}")
 
-    print(f"\n1. Basic Pitch note events with onsets in the window ({len(in_window)}; "
-          f"threshold {CONFIDENCE_THRESHOLD}):")
+    print(f"\n1. Basic Pitch note events with onsets in the window ({len(in_window)}):")
     print(f"   {'start':>7} {'end':>7}  {'pitch':<5} {'midi':>4}  {'amp':>5}")
     for e in in_window:
-        flag = "" if e["kept"] else f"  <- dropped (< {CONFIDENCE_THRESHOLD})"
+        flag = "" if e["kept"] else "  <- filtered out (low confidence)"
         print(f"   {e['start_time']:7.3f} {e['end_time']:7.3f}  {e['pitch']:<5} {e['midi']:>4}  "
               f"{e['amplitude']:5.3f}{flag}")
 
@@ -107,7 +104,7 @@ def inspect(path: str, start: float, end: float, separate: bool, seed: int, expe
     result = {"file": path, "window": [start, end], "separated": separate, "events": in_window}
     if expect:
         expected, pc_mode = parse_expected(expect)
-        chord = classify_chord(expected, pc_mode, (start, end), events, step_of, mapping, activations)
+        chord = classify_chord(expected, pc_mode, (start, end), stages, activations)
         mode = "pitch classes, any octave" if pc_mode else "exact notes"
         print(f"\n4. Expected {expect} ({mode}): {chord['funnel']['mapped']}/{len(expected)} in the tab, "
               f"complete: {chord['complete']}")
@@ -138,8 +135,9 @@ def main() -> None:
     parser.add_argument("--separate", action="store_true", help="analyse the Demucs guitar stem instead")
     parser.add_argument("--seed", type=int, default=0, help="separation seed (default 0)")
     parser.add_argument("--expect", help='expected chord notes, e.g. "G2,B2,D3" or "G,B,D"')
+    add_config_args(parser)
     args = parser.parse_args()
-    inspect(args.file, args.start_s, args.end_s, args.separate, args.seed, args.expect)
+    inspect(args.file, args.start_s, args.end_s, args.separate, args.seed, args.expect, config_from_args(args))
 
 
 if __name__ == "__main__":

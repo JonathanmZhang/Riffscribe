@@ -213,17 +213,28 @@ def map_notes_to_positions(notes: list[dict]) -> list[dict]:
     lexicographically, so ties are broken in favor of the lowest-fret path
     among all cost-optimal paths, without changing the cost formula itself.
     """
+    return map_notes_with_steps(notes)[0]
+
+
+def map_notes_with_steps(notes: list[dict]) -> tuple[list[dict], list[list[dict]]]:
+    """map_notes_to_positions, also returning the groups (tab columns) the
+    notes were placed in, including notes later dropped as unplayable. For
+    the measurement scripts, so they see exactly the grouping the mapper
+    used; the pipeline calls map_notes_to_positions.
+    """
     if not notes:
-        return []
+        return [], []
 
     # step_candidates[i] is a list of candidate positions for step i; a
     # monophonic step gets every valid (string, fret) for its pitch (real
     # DP choice), a chord step gets exactly one pre-voiced combination.
     # Chords that can't be voiced are reduced first (notes dropped), so
     # `steps` holds only the notes that actually get placed.
+    groups: list[list[dict]] = []
     steps: list[list[dict]] = []
     step_candidates: list[list[list[tuple[int, int]]]] = []
     for raw_step in _group_into_steps(notes):
+        groups.append(raw_step)
         step_notes, voicing = _make_voiceable(raw_step)
         if len(step_notes) == 1:
             singles = _candidates_for_pitch(pretty_midi.note_name_to_number(step_notes[0]["pitch"]))
@@ -246,7 +257,7 @@ def map_notes_to_positions(notes: list[dict]) -> list[dict]:
         step_candidates.append(candidates)
 
     if not step_candidates:
-        return []
+        return [], groups
 
     dp: list[list[tuple[float, int]]] = [
         [(0.0, _candidate_fret_sum(c)) for c in step_candidates[0]]
@@ -295,7 +306,7 @@ def map_notes_to_positions(notes: list[dict]) -> list[dict]:
                 }
             )
 
-    return result_notes
+    return result_notes, groups
 
 
 @app.task(name="map_fretboard", soft_time_limit=120)

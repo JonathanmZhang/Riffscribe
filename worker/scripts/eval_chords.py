@@ -38,13 +38,13 @@ import time  # noqa: E402
 
 from scripts.chord_stages import (  # noqa: E402
     CHORD_ONSET_TOLERANCE_SECONDS,
-    CONFIDENCE_THRESHOLD,
+    PIPELINE,
+    StageConfig,
+    add_config_args,
     classify_chord,
-    detect,
-    group,
-    map_with_trace,
-    prepare_audio,
-    step_index,
+    config_from_args,
+    detect_file,
+    run_stages,
 )
 
 PRE_ONSET_S = 0.06
@@ -58,16 +58,14 @@ def _windows(chords: list[dict]) -> list[tuple[float, float]]:
     return list(zip(starts, ends))
 
 
-def evaluate_program(truth: dict, wav_path: str, separate: bool, seed: int) -> dict:
+def evaluate_program(truth: dict, wav_path: str, separate: bool = False, seed: int = 0,
+                     config: StageConfig = PIPELINE) -> dict:
     start_time = time.perf_counter()
     with tempfile.TemporaryDirectory() as workdir:
-        audio = prepare_audio(wav_path, workdir, separate=separate, seed=seed)
-        events, activations = detect(audio["normalized_path"])
+        events, activations, audio = detect_file(wav_path, workdir, separate=separate, seed=seed)
 
-    kept = [e for e in events if e["kept"]]
-    groups = group(kept)
-    step_of = step_index(groups)
-    mapping = map_with_trace(kept)
+    stages = run_stages(events, config)
+    kept, mapping = stages["kept"], stages["mapping"]
     chords = truth["chords"]
     windows = _windows(chords)
 
@@ -83,7 +81,7 @@ def evaluate_program(truth: dict, wav_path: str, separate: bool, seed: int) -> d
             j = chord_of(note)
             return None if j is None else ("this" if j == i else "other")
 
-        analysis = classify_chord(chord["notes"], False, window, events, step_of, mapping, activations, owner)
+        analysis = classify_chord(chord["notes"], False, window, stages, activations, owner)
         results.append({"name": chord["name"], "section": chord["section"], "onset": chord["onset"],
                         "expected": chord["note_names"], **analysis})
 
@@ -123,10 +121,10 @@ def evaluate_program(truth: dict, wav_path: str, separate: bool, seed: int) -> d
     return {"summary": summary, "chords": results}
 
 
-def _print_summary(programs: dict, separate: bool) -> None:
+def _print_summary(programs: dict, separate: bool, config: StageConfig = PIPELINE) -> None:
     rows = [p["summary"] for p in programs.values()]
-    print(f"\nChord eval ({'separated guitar stem' if separate else 'full signal'}; threshold "
-          f"{CONFIDENCE_THRESHOLD}, onset tolerance {CHORD_ONSET_TOLERANCE_SECONDS * 1000:.0f}ms)")
+    print(f"\nChord eval ({'separated guitar stem' if separate else 'full signal'}; {config.describe()}; "
+          f"onset tolerance {CHORD_ONSET_TOLERANCE_SECONDS * 1000:.0f}ms)")
     head = ["", *[f"prog {r['program']} ({r['program_name']})" for r in rows]]
     lines = [
         ("chords / expected notes", [f"{r['chords']} / {r['expected_notes']}" for r in rows]),
@@ -192,7 +190,9 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=0, help="separation seed (default 0)")
     parser.add_argument("--out", help="JSON results path (default: <testset>/eval[_separated].json)")
     parser.add_argument("--worst", type=int, default=3, help="how many worst chords to detail (default 3)")
+    add_config_args(parser)
     args = parser.parse_args()
+    config = config_from_args(args)
 
     truth_paths = sorted(glob.glob(os.path.join(args.testset, "chords_prog*.json")))
     if args.programs:
@@ -205,14 +205,14 @@ def main() -> None:
     for path in truth_paths:
         truth = json.load(open(path))
         programs[truth["program"]] = evaluate_program(
-            truth, os.path.join(args.testset, truth["wav"]), args.separate, args.seed)
+            truth, os.path.join(args.testset, truth["wav"]), args.separate, args.seed, config)
 
-    _print_summary(programs, args.separate)
+    _print_summary(programs, args.separate, config)
     worst = _print_worst(programs, args.worst)
 
     out = args.out or os.path.join(args.testset, "eval_separated.json" if args.separate else "eval.json")
     with open(out, "w") as f:
-        json.dump({"separate": args.separate, "seed": args.seed, "confidence_threshold": CONFIDENCE_THRESHOLD,
+        json.dump({"separate": args.separate, "seed": args.seed, "config": config.describe(),
                    "onset_tolerance_s": CHORD_ONSET_TOLERANCE_SECONDS, "worst": worst,
                    "programs": {str(k): v for k, v in programs.items()}}, f, indent=2, default=list)
     print(f"\nresults written to {out}")

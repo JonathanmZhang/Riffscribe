@@ -1,13 +1,20 @@
-"""Pipeline-faithful stage functions shared by scripts/inspect_chords.py and
-scripts/eval_chords.py. Every stage calls the real pipeline code
-(ensure_decodable_audio / normalize_to_wav / separate_guitar_stem /
-detect_note_events / _group_into_steps / map_notes_to_positions) - nothing is
-re-implemented - with no Celery or Redis. Measurement only: nothing here
-changes pipeline behavior.
+"""Pipeline-faithful stage functions shared by the chord measurement scripts
+(inspect_chords, eval_chords, regression_check). Every stage calls the real
+pipeline code (ensure_decodable_audio / normalize_to_wav /
+separate_guitar_stem / detect_note_events / select_notes /
+map_notes_with_steps) - nothing is re-implemented - with no Celery or Redis.
+
+Post-detection behavior (note selection, grouping) is parameterised by a
+StageConfig whose defaults are the pipeline's, so experiments can sweep
+settings while the defaults always measure what the pipeline does.
+
+Basic Pitch detection (and separation) results are cached per input file,
+since nothing downstream of detection changes them; the cache key covers the
+file contents, separation settings and library versions.
 
 Loss categories used when checking a chord's expected notes:
   (a) never detected by Basic Pitch at any amplitude
-  (b) detected, but every matching event is below the confidence threshold
+  (b) detected, but every matching event was filtered out as low-confidence
   (c) kept, but grouped into a different step than the rest of its chord, or
       the chord's step also absorbed notes from a neighbouring chord
   (d) kept and grouped, but dropped by the fretboard mapper
@@ -15,8 +22,12 @@ Loss categories used when checking a chord's expected notes:
       repeats of a chord note, or other phantoms)
 """
 
+import dataclasses
+import hashlib
+import importlib.metadata
 import logging
 import os
+import pickle
 import random
 import time
 
@@ -26,54 +37,52 @@ import soundfile as sf
 import torch
 from basic_pitch.note_creation import model_frames_to_time
 
+from tasks import fretboard, transcribe
 from tasks.audio_io import ensure_decodable_audio, normalize_to_wav
-from tasks.fretboard import (
-    CHORD_ONSET_TOLERANCE_SECONDS,
-    MAX_FRET,
-    _candidates_for_pitch,
-    _group_into_steps,
-    map_notes_to_positions,
-)
-from tasks.separate import separate_guitar_stem
+from tasks.fretboard import CHORD_ONSET_TOLERANCE_SECONDS, MAX_FRET, _candidates_for_pitch
+from tasks.separate import DEMUCS_MODEL, DEMUCS_SHIFTS, separate_guitar_stem
 from tasks.transcribe import CONFIDENCE_THRESHOLD, detect_note_events
 
 # Basic Pitch's pitch axis starts at A0 (MIDI 21), 88 bins.
 BASIC_PITCH_MIDI_OFFSET = 21
 PITCH_CLASS_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
+CACHE_DIR = os.environ.get("STAGE_CACHE_DIR", "/app/data/_testaudio/.stage_cache")
 
 
-# ---------------------------------------------------------------- stage 0: audio
+@dataclasses.dataclass(frozen=True)
+class StageConfig:
+    """Post-detection settings. Defaults = what the pipeline does."""
+
+    threshold: float = CONFIDENCE_THRESHOLD
+
+    def describe(self) -> str:
+        return ", ".join(f"{f.name}={getattr(self, f.name)}" for f in dataclasses.fields(self))
 
 
-def prepare_audio(input_path: str, workdir: str, separate: bool = False, seed: int = 0) -> dict:
-    """Decodes the input the way ingest_audio does (ffmpeg extraction for
-    video/m4a), optionally separates the guitar the way separate_guitar does,
-    and normalizes to the 22.05kHz mono WAV Basic Pitch is fed. Separation is
-    seeded so repeated runs are identical (Demucs' shifts are random)."""
-    source = ensure_decodable_audio(input_path, workdir)
-    info = {"separated": separate, "separation_seconds": None}
-    if separate:
-        random.seed(seed)
-        np.random.seed(seed)
-        torch.manual_seed(seed)
-        start = time.perf_counter()
-        stem, sample_rate = separate_guitar_stem(source)
-        info["separation_seconds"] = round(time.perf_counter() - start, 2)
-        source = os.path.join(workdir, "guitar_stem.wav")
-        sf.write(source, stem.T, sample_rate, subtype="PCM_16")
-    info["normalized_path"] = normalize_to_wav(source, os.path.join(workdir, "normalized.wav"))
-    return info
+PIPELINE = StageConfig()
 
 
-# ------------------------------------------------------------- stage 1: detect
+def add_config_args(parser) -> None:
+    """Adds one --flag per StageConfig field (default: the pipeline's)."""
+    for field in dataclasses.fields(StageConfig):
+        parser.add_argument(f"--{field.name.replace('_', '-')}", type=type(field.default) if field.default is not None
+                            else float, default=field.default,
+                            help=f"post-detection setting (pipeline default {field.default})")
+
+
+def config_from_args(args) -> StageConfig:
+    return StageConfig(**{f.name: getattr(args, f.name) for f in dataclasses.fields(StageConfig)})
+
+
+# ------------------------------------------------------- stage 0 + 1: detect
 
 
 class Activations:
     """Basic Pitch's per-frame note activations, for asking "did the model
     hear this pitch at all?" about notes it never emitted as events."""
 
-    def __init__(self, model_output: dict):
-        self.note = np.asarray(model_output["note"])  # (frames, 88)
+    def __init__(self, note_matrix: np.ndarray):
+        self.note = np.asarray(note_matrix)  # (frames, 88)
         self.times = np.asarray(model_frames_to_time(self.note.shape[0]))
 
     def peak(self, midi: int, start: float, end: float) -> float:
@@ -84,32 +93,71 @@ class Activations:
         return float(self.note[frames, index].max()) if frames.any() else 0.0
 
 
-def detect(normalized_path: str) -> tuple[list[dict], Activations]:
-    """Every Basic Pitch event, each flagged kept/dropped by the same
-    confidence threshold transcribe uses."""
-    events, model_output = detect_note_events(normalized_path)
-    for event in events:
-        event["kept"] = event["amplitude"] >= CONFIDENCE_THRESHOLD
-    events.sort(key=lambda e: (e["start_time"], e["midi"]))
-    return events, Activations(model_output)
+def _cache_key(input_path: str, separate: bool, seed: int) -> str:
+    digest = hashlib.sha1()
+    with open(input_path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            digest.update(chunk)
+    digest.update(f"|sep={separate}|seed={seed}|bp={importlib.metadata.version('basic-pitch')}".encode())
+    if separate:
+        digest.update(f"|{DEMUCS_MODEL}|shifts={DEMUCS_SHIFTS}|torch={torch.__version__}".encode())
+    return digest.hexdigest()[:20]
 
 
-# ---------------------------------------------------- stage 2 + 3: group, map
+def detect_file(input_path: str, workdir: str, separate: bool = False, seed: int = 0,
+                use_cache: bool = True) -> tuple[list[dict], Activations, dict]:
+    """Decodes the input the way ingest_audio does (ffmpeg extraction for
+    video/m4a), optionally separates the guitar the way separate_guitar does
+    (seeded, since Demucs' shifts are random), normalizes to the 22.05kHz
+    mono WAV Basic Pitch is fed, and returns (every note event, activations,
+    info). Cached per file + settings."""
+    cache_path = None
+    if use_cache:
+        os.makedirs(CACHE_DIR, exist_ok=True)
+        cache_path = os.path.join(CACHE_DIR, _cache_key(input_path, separate, seed) + ".pkl")
+        if os.path.exists(cache_path):
+            with open(cache_path, "rb") as f:
+                events, note_matrix, info = pickle.load(f)
+            return events, Activations(note_matrix), {**info, "cached": True}
+
+    source = ensure_decodable_audio(input_path, workdir)
+    info = {"separated": separate, "separation_seconds": None, "seed": seed}
+    if separate:
+        random.seed(seed)
+        np.random.seed(seed)
+        torch.manual_seed(seed)
+        start = time.perf_counter()
+        stem, sample_rate = separate_guitar_stem(source)
+        info["separation_seconds"] = round(time.perf_counter() - start, 2)
+        source = os.path.join(workdir, "guitar_stem.wav")
+        sf.write(source, stem.T, sample_rate, subtype="PCM_16")
+    normalized = normalize_to_wav(source, os.path.join(workdir, "normalized.wav"))
+    events, model_output = detect_note_events(normalized)
+    note_matrix = np.asarray(model_output["note"], dtype=np.float32)
+
+    if cache_path:
+        with open(cache_path, "wb") as f:
+            pickle.dump((events, note_matrix, info), f)
+    return events, Activations(note_matrix), {**info, "cached": False}
 
 
-def group(kept: list[dict]) -> list[list[dict]]:
-    """Exactly the pipeline's chord grouping (onset tolerance included)."""
-    return _group_into_steps(kept)
+# ------------------------------------------- stages 2-4: select, group, map
 
 
 def note_key(note: dict) -> tuple:
     return (note["start_time"], note["pitch"])
 
 
-def map_with_trace(kept: list[dict]) -> dict:
-    """Runs the real map_notes_to_positions on every kept note, then works
-    out which notes it dropped and why. Returns positions (by note key), drop
-    reasons (by note key) and the mapper's own warning messages."""
+def run_stages(events: list[dict], config: StageConfig = PIPELINE) -> dict:
+    """Runs the pipeline's post-detection stages on raw events: note
+    selection (transcribe.select_notes), then grouping and fretboard
+    mapping (fretboard.map_notes_with_steps). Returns the selected events
+    (with "kept" flags), the kept notes, the groups the mapper used, each
+    kept note's group index, positions and drop reasons."""
+    selected = sorted(transcribe.select_notes(events, threshold=config.threshold),
+                      key=lambda e: (e["start_time"], e["midi"]))
+    kept = [e for e in selected if e["kept"]]
+
     messages: list[str] = []
 
     class _Capture(logging.Handler):
@@ -122,7 +170,7 @@ def map_with_trace(kept: list[dict]) -> dict:
     fretboard_logger.addHandler(handler)
     fretboard_logger.propagate = False
     try:
-        mapped = map_notes_to_positions(kept)
+        mapped, groups = fretboard.map_notes_with_steps(kept)
     finally:
         fretboard_logger.removeHandler(handler)
         fretboard_logger.propagate = previous_propagate
@@ -139,7 +187,13 @@ def map_with_trace(kept: list[dict]) -> dict:
                 "chord conflict: no voicing on distinct strings with the rest of its step; "
                 "dropped as part of the lowest-amplitude conflicting set"
             )
-    return {"positions": positions, "drops": drops, "messages": messages}
+    return {
+        "events": selected,
+        "kept": kept,
+        "groups": groups,
+        "step_of": {note_key(n): i for i, g in enumerate(groups) for n in g},
+        "mapping": {"positions": positions, "drops": drops, "messages": messages},
+    }
 
 
 def onset_spread_ms(step: list[dict]) -> float:
@@ -157,9 +211,7 @@ def classify_chord(
     expected: list[int],
     pitch_class_mode: bool,
     window: tuple[float, float],
-    events: list[dict],
-    step_of: dict,
-    mapping: dict,
+    stages: dict,
     activations: Activations,
     owner=None,
 ) -> dict:
@@ -169,12 +221,13 @@ def classify_chord(
       (for real recordings where the voicing/octave isn't known).
     window: (start, end) - events with onsets in it are attributed to this
       chord.
-    step_of: note key -> index of its group from group().
+    stages: the result of run_stages().
     owner: optional callable(note) -> "this" | "other" | None, used to detect
       a step that merged this chord with a neighbouring chord ("other"); None
       means the note belongs to no chord. By default any kept note outside
       the window counts as a neighbour's.
     """
+    events, step_of, mapping = stages["events"], stages["step_of"], stages["mapping"]
     start, end = window
     in_window = [e for e in events if start <= e["start_time"] < end]
     kept_in_window = [e for e in in_window if e["kept"]]
@@ -282,20 +335,37 @@ def classify_chord(
     }
 
 
-def step_index(groups: list[list[dict]]) -> dict:
-    return {note_key(n): i for i, g in enumerate(groups) for n in g}
-
-
-__all__ = [
-    "CHORD_ONSET_TOLERANCE_SECONDS",
-    "CONFIDENCE_THRESHOLD",
-    "Activations",
-    "classify_chord",
-    "detect",
-    "group",
-    "map_with_trace",
-    "note_key",
-    "onset_spread_ms",
-    "prepare_audio",
-    "step_index",
-]
+def window_metrics(stages: dict, start: float, end: float) -> dict:
+    """Ground-truth-free summary of what the stages do inside one window of
+    a real recording: how many events are kept vs filtered, how the kept
+    notes are grouped into columns, and what the mapper drops."""
+    in_window = [e for e in stages["events"] if start <= e["start_time"] < end]
+    kept = [e for e in in_window if e["kept"]]
+    step_of, mapping = stages["step_of"], stages["mapping"]
+    columns = sorted({step_of[note_key(e)] for e in kept})
+    sizes = [sum(1 for e in kept if step_of[note_key(e)] == s) for s in columns]
+    tab_sizes = [sum(1 for e in kept if step_of[note_key(e)] == s and note_key(e) in mapping["positions"])
+                 for s in columns]
+    chord_cols = [n for n in tab_sizes if n >= 3]
+    # Same-pitch events where the next one starts while (or within 50ms
+    # after) the previous is sounding: re-trigger candidates.
+    retriggers = 0
+    by_pitch: dict[int, list[dict]] = {}
+    for e in kept:
+        by_pitch.setdefault(e["midi"], []).append(e)
+    for evs in by_pitch.values():
+        evs.sort(key=lambda e: e["start_time"])
+        retriggers += sum(1 for a, b in zip(evs, evs[1:]) if b["start_time"] <= a["end_time"] + 0.05)
+    return {
+        "events": len(in_window),
+        "kept": len(kept),
+        "filtered": len(in_window) - len(kept),
+        "filtered_amp_ge_0_35": sum(1 for e in in_window if not e["kept"] and e["amplitude"] >= 0.35),
+        "columns": len(columns),
+        "chord_columns_ge3": len(chord_cols),
+        "mean_notes_per_chord_column": round(sum(chord_cols) / len(chord_cols), 2) if chord_cols else 0.0,
+        "tab_notes": sum(tab_sizes),
+        "mapper_drops": sum(1 for e in kept if note_key(e) in mapping["drops"]),
+        "retrigger_candidates": retriggers,
+        "below_e2": sum(1 for e in kept if e["midi"] < 40),
+    }

@@ -36,6 +36,14 @@ def detect_note_events(audio_path: str) -> tuple[list[dict], dict]:
     return events, model_output
 
 
+def select_notes(events: list[dict], threshold: float = CONFIDENCE_THRESHOLD) -> list[dict]:
+    """Post-detection note selection: returns copies of events, each with a
+    "kept" flag. Shared by extract_notes (the pipeline) and the measurement
+    scripts, so both apply exactly the same rules.
+    """
+    return [{**event, "kept": event["amplitude"] >= threshold} for event in events]
+
+
 def extract_notes(audio_path: str) -> tuple[int, list[dict]]:
     """Runs Basic Pitch on audio_path and applies the confidence filter.
     Returns (raw note count, kept notes in raw_note_events shape). Pure: no
@@ -45,8 +53,8 @@ def extract_notes(audio_path: str) -> tuple[int, list[dict]]:
     events, _ = detect_note_events(audio_path)
     kept = [
         {key: event[key] for key in ("pitch", "start_time", "end_time", "amplitude")}
-        for event in events
-        if event["amplitude"] >= CONFIDENCE_THRESHOLD
+        for event in select_notes(events)
+        if event["kept"]
     ]
     return len(events), kept
 
