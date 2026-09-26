@@ -70,8 +70,10 @@ stays the fixed four-value enum.
   (job_dir, probe_duration_seconds, normalize_to_wav),
   transcribe.extract_notes, separate.separate_guitar_stem,
   fretboard.map_notes_to_positions. scripts/ab_separation.py uses them.
-- scripts/ is NOT volume-mounted — rebuild the worker image after
-  editing anything under worker/scripts/
+- Worker code is NOT volume-mounted: tasks/ and scripts/ are both
+  COPY'd into the image, so ANY change under worker/ needs a rebuild
+  (docker compose up -d --build worker worker-separation — both services
+  use the same image). Only ./data is mounted.
 - Frontend has a light Tailwind polish pass done (colors, layout, status
   badges, sticky grid headers) but no real design system yet — a Figma
   pass is planned later. Don't over-invest further in visual redesign
@@ -133,11 +135,13 @@ stays the fixed four-value enum.
   requirements.txt so the big TensorFlow layer stays cached. The
   htdemucs_6s weights are baked into the image (TORCH_HOME=/app/models).
 - Separation runs on the ORIGINAL source (44.1/48kHz stereo), not
-  normalized.wav. It's slow on CPU: real-time factor ~1.6–3.7 measured
-  (varies run to run with machine load), so 120s audio can take ~3-7.5
-  min against the 900s soft limit. Peak memory ~1.9 GiB for 98s of audio.
+  normalized.wav. It's slow on CPU: real-time factor ~1.3–3.7 measured
+  (varies run to run with host load, not with torch thread count), so
+  120s audio can take ~3-7.5 min against the 900s soft limit. The first
+  separation after a worker restart is ~30-50% slower than later ones. Peak memory ~1.9 GiB for 98s of audio.
   DEMUCS_SHIFTS>=1 applies a random shift, so the stem, and therefore
-  the note count, varies slightly between runs of the same file.
+  the note count, varies slightly between runs of the same file (the
+  pipeline doesn't seed it; scripts/ab_separation.py --seed does).
 - On Windows/Git Bash specifically: `docker compose exec` container
   paths can get mangled by Git Bash's POSIX-path conversion — prefix
   with MSYS_NO_PATHCONV=1.
