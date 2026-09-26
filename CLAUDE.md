@@ -161,6 +161,13 @@ stays the fixed four-value enum.
   notes at detection/threshold. Backend grouping must stay identical to
   TabViewer.tsx's (anchor on first note, 150ms) unless the frontend is
   changed to use a backend-provided step index.
+- Tested and rejected (never merged; branch experiment/time-stretch):
+  time-stretching audio to 0.75x/0.5x (Rubber Band R3, pitch kept) before
+  Basic Pitch, rescaling note times. Synthetic recall/complete dropped
+  (clean 76%/35% -> 50%/15% at 0.75x, 53%/10% at 0.5x), no fast-
+  progression gain (complete 25/25/0% -> 12/25/0% and 0/25/0%), known-tab
+  clip neutral at 0.75x and worse at 0.5x (97% recall, 14/15), and
+  detection ~3x slower. Extra notes it adds on real audio are mostly false.
 - On Windows/Git Bash specifically: `docker compose exec` container
   paths can get mangled by Git Bash's POSIX-path conversion — prefix
   with MSYS_NO_PATHCONV=1.
