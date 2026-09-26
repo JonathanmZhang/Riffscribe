@@ -52,7 +52,8 @@ Audio sync via native <audio> element + requestAnimationFrame polling.
 
 ### 3.3 API Contract
 
-POST /jobs — multipart (file: UploadFile, max 15MB, .mp3/.wav/.m4a)
+POST /jobs — multipart (file: UploadFile, max 200MB, .mp3/.wav/.m4a or
+video .mp4/.webm/.mov — ingest_audio extracts the audio track with ffmpeg)
 OR JSON ({"url": "..."}). Returns 202: {job_id, status: "queued"}.
 Validation errors → 422.
 
@@ -131,7 +132,7 @@ Time is stored in raw seconds, not beats/measures, for v1.
 REDIS_URL=redis://redis:6379/0
 CELERY_BROKER_URL=redis://redis:6379/0
 CELERY_RESULT_BACKEND=redis://redis:6379/1
-MAX_UPLOAD_MB=15
+MAX_UPLOAD_MB=200   # backend; local-only app, sized for music videos
 MAX_AUDIO_DURATION_SECONDS=300   # read by the worker (ingest_audio); set in docker-compose.yml
 BASIC_PITCH_CONFIDENCE_THRESHOLD=0.5
 

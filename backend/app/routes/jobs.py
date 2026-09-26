@@ -1,5 +1,6 @@
 import json
 import os
+import shutil
 from uuid import uuid4
 
 import redis.asyncio as redis
@@ -14,8 +15,12 @@ router = APIRouter(prefix="/jobs", tags=["jobs"])
 REDIS_URL = os.environ.get("REDIS_URL", "redis://redis:6379/0")
 CELERY_BROKER_URL = os.environ.get("CELERY_BROKER_URL", "redis://redis:6379/0")
 CELERY_RESULT_BACKEND = os.environ.get("CELERY_RESULT_BACKEND", "redis://redis:6379/1")
-MAX_UPLOAD_MB = int(os.environ.get("MAX_UPLOAD_MB", "15"))
-ALLOWED_EXTENSIONS = {"mp3", "wav", "m4a"}
+# Local-only app, so large enough for music videos.
+MAX_UPLOAD_MB = int(os.environ.get("MAX_UPLOAD_MB", "200"))
+# Audio files, plus video containers: ingest_audio extracts the audio track
+# with ffmpeg and ignores the video.
+ALLOWED_EXTENSIONS = {"mp3", "wav", "m4a", "mp4", "webm", "mov"}
+UPLOAD_CHUNK_BYTES = 1024 * 1024
 DATA_DIR = "/app/data"
 
 redis_client = redis.from_url(REDIS_URL, decode_responses=True)
@@ -68,15 +73,23 @@ async def create_job(request: Request) -> JobCreateResponse:
                 detail=f"Unsupported file type '.{extension}'; allowed: {sorted(ALLOWED_EXTENSIONS)}",
             )
 
-        contents = await upload.read()
-        if len(contents) > MAX_UPLOAD_MB * 1024 * 1024:
-            raise HTTPException(status_code=422, detail=f"File exceeds {MAX_UPLOAD_MB}MB limit")
-
         job_dir = os.path.join(DATA_DIR, job_id)
         os.makedirs(job_dir, exist_ok=True)
         saved_path = os.path.join(job_dir, f"original.{extension}")
+        # Copied in chunks rather than read() into memory whole, now that
+        # uploads can be hundreds of MB; oversized files are rejected (and
+        # the partial copy removed) as soon as they cross the limit.
+        max_bytes = MAX_UPLOAD_MB * 1024 * 1024
+        written = 0
         with open(saved_path, "wb") as f:
-            f.write(contents)
+            while chunk := await upload.read(UPLOAD_CHUNK_BYTES):
+                written += len(chunk)
+                if written > max_bytes:
+                    break
+                f.write(chunk)
+        if written > max_bytes:
+            shutil.rmtree(job_dir, ignore_errors=True)
+            raise HTTPException(status_code=422, detail=f"File exceeds {MAX_UPLOAD_MB}MB limit")
 
         source = {"type": "file", "path": saved_path}
         # Checkbox-style form field: "true"/"1"/"on" (any case) enable it.

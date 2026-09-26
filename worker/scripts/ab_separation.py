@@ -27,7 +27,12 @@ import numpy as np  # noqa: E402
 import pretty_midi  # noqa: E402
 import soundfile as sf  # noqa: E402
 
-from tasks.audio_io import TARGET_SAMPLE_RATE, normalize_to_wav, probe_duration_seconds  # noqa: E402
+from tasks.audio_io import (  # noqa: E402
+    TARGET_SAMPLE_RATE,
+    ensure_decodable_audio,
+    normalize_to_wav,
+    probe_duration_seconds,
+)
 from tasks.fretboard import map_notes_to_positions  # noqa: E402
 from tasks.separate import DEMUCS_MODEL, DEMUCS_SHIFTS, _load_model, separate_guitar_stem  # noqa: E402
 from tasks.transcribe import CONFIDENCE_THRESHOLD, extract_notes  # noqa: E402
@@ -81,6 +86,8 @@ def run(input_path: str, out_path: str | None) -> dict:
     stem_path = os.path.join(stem_dir, os.path.splitext(os.path.basename(input_path))[0] + "_guitar_stem.wav")
 
     with tempfile.TemporaryDirectory() as workdir:
+        # Same decode path as ingest_audio (ffmpeg extraction for video/m4a).
+        decodable = ensure_decodable_audio(input_path, workdir)
         warmup_seconds = _warm_up(workdir)
         load_start = time.perf_counter()
         _load_model(DEMUCS_MODEL)
@@ -88,12 +95,12 @@ def run(input_path: str, out_path: str | None) -> dict:
 
         # (a) full mix: exactly the pipeline without isolate_guitar.
         start = time.perf_counter()
-        normalized = normalize_to_wav(input_path, os.path.join(workdir, "mix_normalized.wav"))
+        normalized = normalize_to_wav(decodable, os.path.join(workdir, "mix_normalized.wav"))
         a = _metrics(*_transcribe_and_map(normalized), duration, time.perf_counter() - start)
 
         # (b) separated: the pipeline with isolate_guitar.
         start = time.perf_counter()
-        stem, sample_rate = separate_guitar_stem(input_path)
+        stem, sample_rate = separate_guitar_stem(decodable)
         separation_seconds = time.perf_counter() - start
         sf.write(stem_path, stem.T, sample_rate, subtype="PCM_16")
         normalized = normalize_to_wav(stem_path, os.path.join(workdir, "stem_normalized.wav"))

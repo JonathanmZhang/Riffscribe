@@ -3,7 +3,7 @@ import os
 
 import yt_dlp
 
-from tasks.audio_io import job_dir, normalize_to_wav, probe_duration_seconds
+from tasks.audio_io import ensure_decodable_audio, job_dir, normalize_to_wav, probe_duration_seconds
 from tasks.celery_app import app
 from tasks.storage import update_job
 
@@ -57,6 +57,11 @@ def ingest_audio(job_id: str, source: dict) -> str:
                 f"audio is {duration:.0f} seconds long, which exceeds the "
                 f"{MAX_AUDIO_DURATION_SECONDS:.0f} second limit"
             )
+
+        # Video containers (mp4/mov/webm) and m4a are extracted to a WAV with
+        # ffmpeg first (audio track only); that WAV is also what
+        # separate_guitar runs on.
+        input_path = ensure_decodable_audio(input_path, directory)
 
         normalized_path = normalize_to_wav(input_path, os.path.join(directory, "normalized.wav"))
         logger.info("ingest_audio: job %s normalized audio at %s", job_id, normalized_path)

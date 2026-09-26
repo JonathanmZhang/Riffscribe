@@ -89,11 +89,11 @@ For a first run, use this 8-second public-domain guitar clip from Wikimedia Comm
    ```
 3. Click **Transcribe**. When the status turns `done`, a tab of about three dozen notes appears. Press play, and the notes being played highlight as the audio plays.
 
-The link has to go through **Paste URL**, because file uploads only accept `.mp3`, `.wav` and `.m4a` and this clip is `.ogg`.
+The link has to go through **Paste URL**, because file uploads only accept `.mp3`, `.wav`, `.m4a`, `.mp4`, `.webm` and `.mov`, and this clip is `.ogg`.
 
 After that, try your own audio:
 
-- **Upload file:** an `.mp3`, `.wav` or `.m4a`, up to 15 MB and 5 minutes long.
+- **Upload file:** audio (`.mp3`, `.wav`, `.m4a`) or video (`.mp4`, `.webm`, `.mov`), up to 200 MB and 5 minutes long. For video, only the audio track is used.
 - **Paste URL:** a YouTube or SoundCloud link, or any direct link to an audio file.
 
 Clean, solo guitar gives the best results. A short instrumental clip without drums or vocals is a good choice. In a full band mix, other instruments show up as extra notes. See [Known limitations](#known-limitations).
@@ -119,7 +119,7 @@ The `NEXT_PUBLIC_*` values are built into the frontend at build time, so they're
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `POST` | `/jobs` | Submit a job. Send either `multipart/form-data` with a `file` field (`.mp3`/`.wav`/`.m4a`, max 15 MB) or JSON `{"url": "..."}`. Add `isolate_guitar` to separate the guitar first: a form field set to `true`, `1` or `on`, or `"isolate_guitar": true` in the JSON. It defaults to off. Returns `202` with `{"job_id": "...", "status": "queued"}`. Invalid input returns `422`. |
+| `POST` | `/jobs` | Submit a job. Send either `multipart/form-data` with a `file` field (`.mp3`/`.wav`/`.m4a`/`.mp4`/`.webm`/`.mov`, max 200 MB; video files are reduced to their audio track) or JSON `{"url": "..."}`. Add `isolate_guitar` to separate the guitar first: a form field set to `true`, `1` or `on`, or `"isolate_guitar": true` in the JSON. It defaults to off. Returns `202` with `{"job_id": "...", "status": "queued"}`. Invalid input returns `422`. |
 | `GET` | `/jobs/{job_id}` | Returns `{job_id, status, error, result, isolate_guitar, stage, stem_available}`. `status` is always one of `queued`, `processing`, `done` or `failed`. `stage` names the running step (`ingesting`, `separating`, `transcribing`, `mapping`). `stem_available` turns true once a guitar stem exists. `result` is filled in only when `done`, and `error` only when `failed`. Unknown IDs return `404`. |
 | `GET` | `/jobs/{job_id}/audio` | Streams the job's normalized WAV (`audio/wav`) and supports Range requests for seeking. Returns `404` if the job doesn't exist or its audio hasn't been produced yet. |
 | `GET` | `/jobs/{job_id}/stem` | Streams the separated guitar stem (44.1 kHz stereo WAV), with Range support. Returns `404` unless the job ran with `isolate_guitar` and separation has finished. |
@@ -156,7 +156,7 @@ Riffscribe v1 has been tested against synthetic test tones, real guitar recordin
 - **Chord grouping uses a fixed 150 ms onset window.** Notes starting within 150 ms of each other are treated as one chord. The value was tuned empirically against real strums. Very fast runs with sub-150 ms note spacing can be merged into a single chord.
 - **Unplayable notes are dropped, not fatal.** A standalone note outside frets 0–20 is dropped. For a chord that can't be placed on distinct strings, the smallest set of notes that resolves the conflict is dropped. Either way the job still completes and a warning naming the pitch, time and amplitude is logged. The dropped notes are not surfaced in the API response.
 - **Tempo is an estimate.** `tempo_bpm` comes from librosa's beat tracker and is rounded to a whole BPM. It was within 1–4 BPM on plucked-guitar test clips with known tempos of 100 and 140. The tracker relies on percussive onsets, so it is less reliable on solo recordings without drums or a clear pulse, and it can lock onto half or double the tempo you'd tap along to. The UI labels it as approximate. The tab itself is laid out in seconds, not beats or measures.
-- **Audio is capped at 5 minutes.** Recordings longer than `MAX_AUDIO_DURATION_SECONDS` (default 300, set in `docker-compose.yml`) are rejected before any decoding or inference. Because duration isn't known until the audio has been uploaded or downloaded, the check runs in the worker rather than at submission. `POST /jobs` still returns `202`, and the job then moves to `failed` with an error such as `audio is 412 seconds long, which exceeds the 300 second limit`. File uploads are also capped at 15 MB.
+- **Audio is capped at 5 minutes.** Recordings longer than `MAX_AUDIO_DURATION_SECONDS` (default 300, set in `docker-compose.yml`) are rejected before any decoding or inference. Because duration isn't known until the audio has been uploaded or downloaded, the check runs in the worker rather than at submission. `POST /jobs` still returns `202`, and the job then moves to `failed` with an error such as `audio is 412 seconds long, which exceeds the 300 second limit`. File uploads are also capped at 200 MB.
 - **The tab grid doesn't auto-scroll** to follow playback. On long songs, the highlighted column can be off-screen until you scroll to it.
 - **Link submission may be turned off on hosted deployments.** A public deployment can hide the "Paste URL" option by setting `NEXT_PUBLIC_ENABLE_URL_INGESTION=false`. The page then says link transcription is available when running locally. Everything works when you run it yourself with `docker compose`.
 
