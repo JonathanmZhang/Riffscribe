@@ -134,7 +134,7 @@ stays the fixed four-value enum.
   htdemucs_6s weights are baked into the image (TORCH_HOME=/app/models).
 - Separation runs on the ORIGINAL source (44.1/48kHz stereo), not
   normalized.wav. It's slow on CPU: real-time factor ~1.6–3.7 measured
-  (varies run to run with machine load), so 180s audio can take ~5-11
+  (varies run to run with machine load), so 120s audio can take ~3-7.5
   min against the 900s soft limit. Peak memory ~1.9 GiB for 98s of audio.
   DEMUCS_SHIFTS>=1 applies a random shift, so the stem, and therefore
   the note count, varies slightly between runs of the same file.

@@ -154,7 +154,7 @@ DEMUCS_MODEL=htdemucs_6s                   # must have a "guitar" source; only
   the default's weights are baked into the worker image
 DEMUCS_SHIFTS=1                            # Demucs random-shift passes;
   higher is slightly better quality and proportionally slower
-MAX_SEPARATION_DURATION_SECONDS=180        # longer audio fails the job at
+MAX_SEPARATION_DURATION_SECONDS=120        # longer audio fails the job at
   the separating stage with a readable message
 SEPARATION_SOFT_TIME_LIMIT_SECONDS=900     # separate_guitar's soft time
   limit (the other tasks keep 120s)

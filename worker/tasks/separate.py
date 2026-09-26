@@ -31,7 +31,7 @@ DEMUCS_MODEL = os.environ.get("DEMUCS_MODEL", "htdemucs_6s")
 DEMUCS_SHIFTS = int(os.environ.get("DEMUCS_SHIFTS", "1"))
 # Separation is far slower than the rest of the pipeline on CPU, so it has
 # its own, tighter duration cap and a longer time limit than the 120s tasks.
-MAX_SEPARATION_DURATION_SECONDS = float(os.environ.get("MAX_SEPARATION_DURATION_SECONDS", "180"))
+MAX_SEPARATION_DURATION_SECONDS = float(os.environ.get("MAX_SEPARATION_DURATION_SECONDS", "120"))
 SEPARATION_SOFT_TIME_LIMIT_SECONDS = int(os.environ.get("SEPARATION_SOFT_TIME_LIMIT_SECONDS", "900"))
 
 GUITAR_SOURCE = "guitar"

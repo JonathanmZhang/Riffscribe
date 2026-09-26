@@ -43,7 +43,7 @@ services:
       - CELERY_RESULT_BACKEND=redis://redis:6379/1
       - DEMUCS_MODEL=htdemucs_6s
       - DEMUCS_SHIFTS=1
-      - MAX_SEPARATION_DURATION_SECONDS=180
+      - MAX_SEPARATION_DURATION_SECONDS=120
       - SEPARATION_SOFT_TIME_LIMIT_SECONDS=900
     depends_on:
       - redis

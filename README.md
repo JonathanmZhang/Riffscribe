@@ -110,7 +110,7 @@ You don't need to change anything to run locally: `docker-compose.yml` already s
 | `MAX_AUDIO_DURATION_SECONDS` | worker | `300` | Longest audio accepted |
 | `DEMUCS_MODEL` | worker-separation | `htdemucs_6s` | Separation model. Must have a guitar stem. Only the default's weights are built into the image. |
 | `DEMUCS_SHIFTS` | worker-separation | `1` | Demucs shift passes. Higher is slightly better and proportionally slower. |
-| `MAX_SEPARATION_DURATION_SECONDS` | worker-separation | `180` | Longest audio accepted with **Isolate guitar**. Longer audio fails at the separating stage with a clear message. |
+| `MAX_SEPARATION_DURATION_SECONDS` | worker-separation | `120` | Longest audio accepted with **Isolate guitar**. Longer audio fails at the separating stage with a clear message. |
 | `SEPARATION_SOFT_TIME_LIMIT_SECONDS` | worker-separation | `900` | Time limit for the separation task. The other tasks keep 120 s. |
 
 The `NEXT_PUBLIC_*` values are built into the frontend at build time, so they're Docker build arguments rather than runtime environment variables. After changing one, rebuild with `docker compose up -d --build frontend`, or redeploy on a host such as Vercel.
