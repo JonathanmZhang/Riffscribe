@@ -140,6 +140,12 @@ CHORD_TONE_CONFIDENCE_FLOOR=0.45   # worker (transcribe): a note below the
   within the chord onset window (150ms) of it, i.e. a chord tone. Values >=
   the threshold disable it. 0.45 chosen from the chord eval: full recall on
   the real tab-sample clip; lower values mostly add octave errors there.
+RETRIGGER_MERGE_GAP_SECONDS=0.04   # worker (transcribe): a same-pitch event
+  starting while the previous one sounds, or <= this many seconds after it
+  ends, is merged into it (earlier start, later end, higher amplitude)...
+RETRIGGER_MAX_ONSET_ACTIVATION=0.6 # ...only if Basic Pitch's onset
+  activation at its start is below this (a weak attack). 1.0 = no gate;
+  empty gap disables merging.
 
 # Backend: comma-separated explicit allowlist of frontend origins for CORS.
 # A "*" wildcard is rejected at startup.

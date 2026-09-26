@@ -7,6 +7,7 @@ import numpy as np
 import pretty_midi
 from basic_pitch import ICASSP_2022_MODEL_PATH
 from basic_pitch.inference import predict
+from basic_pitch.note_creation import model_frames_to_time
 
 from tasks.celery_app import app
 from tasks.fretboard import CHORD_ONSET_TOLERANCE_SECONDS
@@ -18,16 +19,33 @@ CONFIDENCE_THRESHOLD = float(os.environ.get("BASIC_PITCH_CONFIDENCE_THRESHOLD", 
 # Lower confidence bar for notes that start with a confident note (chord
 # tones); see select_notes. Values >= CONFIDENCE_THRESHOLD disable it.
 CHORD_TONE_CONFIDENCE_FLOOR = float(os.environ.get("CHORD_TONE_CONFIDENCE_FLOOR", "0.45"))
+# Re-trigger merging (see merge_retriggers). An empty gap disables it.
+_merge_gap = os.environ.get("RETRIGGER_MERGE_GAP_SECONDS", "0.04")
+RETRIGGER_MERGE_GAP_SECONDS = float(_merge_gap) if _merge_gap else None
+RETRIGGER_MAX_ONSET_ACTIVATION = float(os.environ.get("RETRIGGER_MAX_ONSET_ACTIVATION", "0.6"))
+
+BASIC_PITCH_MIDI_OFFSET = 21  # Basic Pitch's pitch axis starts at A0
+ONSET_LOOKUP_SECONDS = 0.03
 
 
 def detect_note_events(audio_path: str) -> tuple[list[dict], dict]:
     """Runs Basic Pitch on audio_path and returns (every note event, before
     any confidence filter, and the raw model output). Each event has pitch,
-    midi, start_time, end_time and amplitude. Pure: used by extract_notes and
-    by the chord inspection/evaluation scripts, which need the events the
-    filter drops and the model's per-frame activations.
+    midi, start_time, end_time, amplitude and onset_activation (Basic Pitch's
+    peak onset activation for that pitch within 30ms of the start: how
+    strongly the model heard an attack). Pure: used by extract_notes and by
+    the chord inspection/evaluation scripts, which need the events the filter
+    drops and the model's per-frame activations.
     """
     model_output, _, note_events = predict(audio_path, ICASSP_2022_MODEL_PATH)
+    onsets = np.asarray(model_output["onset"])
+    frame_times = np.asarray(model_frames_to_time(onsets.shape[0]))
+
+    def onset_activation(start: float, midi: int) -> float:
+        frames = np.abs(frame_times - start) <= ONSET_LOOKUP_SECONDS
+        index = midi - BASIC_PITCH_MIDI_OFFSET
+        return float(onsets[frames, index].max()) if frames.any() and 0 <= index < onsets.shape[1] else 0.0
+
     events = [
         {
             "pitch": pretty_midi.note_number_to_name(pitch_midi),
@@ -35,20 +53,62 @@ def detect_note_events(audio_path: str) -> tuple[list[dict], dict]:
             "start_time": start_time,
             "end_time": end_time,
             "amplitude": float(amplitude),
+            "onset_activation": onset_activation(start_time, int(pitch_midi)),
         }
         for start_time, end_time, pitch_midi, amplitude, _pitch_bends in note_events
     ]
     return events, model_output
 
 
+def merge_retriggers(
+    events: list[dict],
+    max_gap: float | None = RETRIGGER_MERGE_GAP_SECONDS,
+    max_onset_activation: float = RETRIGGER_MAX_ONSET_ACTIVATION,
+) -> list[dict]:
+    """Merges re-triggers: when an event of the same pitch starts while the
+    previous one is still sounding, or within max_gap seconds after it ends,
+    they become one note (earlier start, later end, higher amplitude). With
+    distortion Basic Pitch often splits one sustained note this way.
+
+    The gap alone can't tell a re-trigger from a real repeated note - Basic
+    Pitch ends a note exactly where the next same-pitch note starts in ~90%
+    of both cases - so merging can be gated on the second event's onset
+    activation: only events whose attack Basic Pitch heard weakly (below
+    max_onset_activation) are merged. 1.0 = no gate. max_gap None disables.
+    """
+    if max_gap is None:
+        return list(events)
+    merged: list[dict] = []
+    last_by_pitch: dict[int, dict] = {}
+    for event in sorted(events, key=lambda e: e["start_time"]):
+        previous = last_by_pitch.get(event["midi"])
+        if (
+            previous is not None
+            and event["start_time"] <= previous["end_time"] + max_gap
+            and event.get("onset_activation", 0.0) < max_onset_activation
+        ):
+            previous["end_time"] = max(previous["end_time"], event["end_time"])
+            previous["amplitude"] = max(previous["amplitude"], event["amplitude"])
+            continue
+        copy = dict(event)
+        merged.append(copy)
+        last_by_pitch[event["midi"]] = copy
+    return merged
+
+
 def select_notes(
     events: list[dict],
     threshold: float = CONFIDENCE_THRESHOLD,
     chord_floor: float = CHORD_TONE_CONFIDENCE_FLOOR,
+    merge_gap: float | None = RETRIGGER_MERGE_GAP_SECONDS,
+    merge_max_onset: float = RETRIGGER_MAX_ONSET_ACTIVATION,
 ) -> list[dict]:
     """Post-detection note selection: returns copies of events, each with a
     "kept" flag. Shared by extract_notes (the pipeline) and the measurement
     scripts, so both apply exactly the same rules.
+
+    Re-triggers are merged first (merge_retriggers), so a merged note's
+    confidence is the higher of its parts.
 
     A note at or above `threshold` is kept. A weaker note is also kept when
     it's at least `chord_floor` AND a note at or above `threshold` starts
@@ -57,6 +117,7 @@ def select_notes(
     while they arrive together with at least one confident note. Isolated
     weak notes stay filtered. chord_floor >= threshold disables the rule.
     """
+    events = merge_retriggers(events, merge_gap, merge_max_onset)
     confident_onsets = sorted(e["start_time"] for e in events if e["amplitude"] >= threshold)
 
     def near_confident(start: float) -> bool:

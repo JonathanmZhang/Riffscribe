@@ -109,6 +109,8 @@ You don't need to change anything to run locally: `docker-compose.yml` already s
 | `CORS_ALLOWED_ORIGINS` | backend | `http://localhost:3000` | Comma-separated list of allowed frontend origins. Wildcards are rejected. |
 | `MAX_AUDIO_DURATION_SECONDS` | worker | `300` | Longest audio accepted |
 | `CHORD_TONE_CONFIDENCE_FLOOR` | worker | `0.45` | Keeps a lower-confidence note (at or above this value) when it starts together with a confident note, so the quieter tones of a strummed chord aren't dropped. Set it to `0.5` or higher to turn this off. |
+| `RETRIGGER_MERGE_GAP_SECONDS` | worker | `0.04` | Joins a same-pitch note that starts while the previous one is still sounding, or within this many seconds after it ends, into one note. Empty turns merging off. |
+| `RETRIGGER_MAX_ONSET_ACTIVATION` | worker | `0.6` | Only merges when the model heard a weak attack (below this). `1.0` merges on the gap alone. |
 | `DEMUCS_MODEL` | worker-separation | `htdemucs_6s` | Separation model. Must have a guitar stem. Only the default's weights are built into the image. |
 | `DEMUCS_SHIFTS` | worker-separation | `1` | Demucs shift passes. Higher is slightly better and proportionally slower. |
 | `MAX_SEPARATION_DURATION_SECONDS` | worker, worker-separation | `120` | Longest audio accepted with **Isolate guitar**. Longer audio fails during ingest, within seconds and before any processing, with a clear message. |
