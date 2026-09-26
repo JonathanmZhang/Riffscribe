@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, type SyntheticEvent } from "react";
-import { getJob, getJobAudioUrl, type JobStatusValue, type TabResult } from "@/app/lib/api";
+import { getJob, getJobAudioUrl, type JobStage, type JobStatusValue, type TabResult } from "@/app/lib/api";
 import TabViewer from "@/app/components/TabViewer";
 
 const POLL_INTERVAL_MS = 2000;
@@ -18,6 +18,13 @@ const STATUS_STYLES: Record<JobStatusValue, string> = {
   failed: "bg-red-100 text-red-700",
 };
 
+const STAGE_LABELS: Record<JobStage, string> = {
+  ingesting: "Preparing audio…",
+  separating: "Separating guitar…",
+  transcribing: "Detecting notes…",
+  mapping: "Mapping to fretboard…",
+};
+
 interface JobStatusProps {
   jobId: string;
 }
@@ -26,6 +33,7 @@ export default function JobStatus({ jobId }: JobStatusProps) {
   const [status, setStatus] = useState<JobStatusValue>("queued");
   const [jobError, setJobError] = useState<string | null>(null);
   const [pollError, setPollError] = useState<string | null>(null);
+  const [stage, setStage] = useState<JobStage | null>(null);
   const [result, setResult] = useState<TabResult | null>(null);
   const [currentTime, setCurrentTime] = useState<number | null>(null);
   const [playbackRate, setPlaybackRate] = useState<number>(1);
@@ -54,6 +62,7 @@ export default function JobStatus({ jobId }: JobStatusProps) {
         if (cancelled) return;
 
         setStatus(job.status);
+        setStage(job.stage);
         setJobError(job.error);
 
         if (TERMINAL_STATUSES.includes(job.status)) {
@@ -92,6 +101,14 @@ export default function JobStatus({ jobId }: JobStatusProps) {
             {status}
           </span>
         </div>
+        {status === "processing" && stage && (
+          <p className="text-sm font-medium text-indigo-700">
+            {STAGE_LABELS[stage]}
+            {stage === "separating" && (
+              <span className="font-normal text-slate-500"> This can take a few minutes.</span>
+            )}
+          </p>
+        )}
         <p className="text-sm text-slate-500">
           Job <code className="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-xs text-slate-700">{jobId}</code>
         </p>

@@ -15,6 +15,7 @@ export default function UploadForm({ onJobCreated }: UploadFormProps) {
   const [mode, setMode] = useState<Mode>("file");
   const [file, setFile] = useState<File | null>(null);
   const [url, setUrl] = useState("");
+  const [isolateGuitar, setIsolateGuitar] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -35,8 +36,8 @@ export default function UploadForm({ onJobCreated }: UploadFormProps) {
     try {
       const response =
         mode === "file"
-          ? await createJobFromFile(file as File)
-          : await createJobFromUrl(url.trim());
+          ? await createJobFromFile(file as File, isolateGuitar)
+          : await createJobFromUrl(url.trim(), isolateGuitar);
       onJobCreated(response.job_id);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to submit job.");
@@ -106,6 +107,22 @@ export default function UploadForm({ onJobCreated }: UploadFormProps) {
           className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/30"
         />
       )}
+
+      {/* Applies to both file and URL mode. */}
+      <label className="flex w-fit cursor-pointer items-start gap-2.5 text-sm">
+        <input
+          type="checkbox"
+          checked={isolateGuitar}
+          onChange={(event) => setIsolateGuitar(event.target.checked)}
+          className="mt-0.5 h-4 w-4 rounded border-slate-300 accent-indigo-600"
+        />
+        <span className="flex flex-col">
+          <span className="font-medium text-slate-800">Isolate guitar</span>
+          <span className="text-xs text-slate-500">
+            Separates the guitar from the rest of the mix first. Slower: can take a few minutes.
+          </span>
+        </span>
+      </label>
 
       {error && <p className="text-sm text-red-600">{error}</p>}
 

@@ -29,11 +29,18 @@ export interface JobCreateResponse {
   status: JobStatusValue;
 }
 
+// Which pipeline task is running; separate from status. null when queued or
+// done, and left at the failing stage when a job fails.
+export type JobStage = "ingesting" | "separating" | "transcribing" | "mapping";
+
 export interface JobStatusResponse {
   job_id: string;
   status: JobStatusValue;
   error: string | null;
   result: TabResult | null;
+  isolate_guitar: boolean;
+  stage: JobStage | null;
+  stem_available: boolean;
 }
 
 async function parseOrThrow<T>(response: Response): Promise<T> {
@@ -44,9 +51,10 @@ async function parseOrThrow<T>(response: Response): Promise<T> {
   return response.json();
 }
 
-export async function createJobFromFile(file: File): Promise<JobCreateResponse> {
+export async function createJobFromFile(file: File, isolateGuitar: boolean): Promise<JobCreateResponse> {
   const formData = new FormData();
   formData.append("file", file);
+  formData.append("isolate_guitar", String(isolateGuitar));
 
   const response = await fetch(`${API_BASE_URL}/jobs`, {
     method: "POST",
@@ -56,11 +64,11 @@ export async function createJobFromFile(file: File): Promise<JobCreateResponse> 
   return parseOrThrow<JobCreateResponse>(response);
 }
 
-export async function createJobFromUrl(url: string): Promise<JobCreateResponse> {
+export async function createJobFromUrl(url: string, isolateGuitar: boolean): Promise<JobCreateResponse> {
   const response = await fetch(`${API_BASE_URL}/jobs`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ url }),
+    body: JSON.stringify({ url, isolate_guitar: isolateGuitar }),
   });
 
   return parseOrThrow<JobCreateResponse>(response);
