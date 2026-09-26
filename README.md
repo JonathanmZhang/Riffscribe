@@ -112,6 +112,7 @@ You don't need to change anything to run locally: `docker-compose.yml` already s
 | `DEMUCS_SHIFTS` | worker-separation | `1` | Demucs shift passes. Higher is slightly better and proportionally slower. |
 | `MAX_SEPARATION_DURATION_SECONDS` | worker, worker-separation | `120` | Longest audio accepted with **Isolate guitar**. Longer audio fails during ingest, within seconds and before any processing, with a clear message. |
 | `SEPARATION_SOFT_TIME_LIMIT_SECONDS` | worker-separation | `900` | Time limit for the separation task. The other tasks keep 120 s. |
+| `SEPARATION_TORCH_THREADS` | worker-separation | half the CPUs | CPU threads Demucs may use, so separation doesn't compete with the main worker for every core. |
 
 The `NEXT_PUBLIC_*` values are built into the frontend at build time, so they're Docker build arguments rather than runtime environment variables. After changing one, rebuild with `docker compose up -d --build frontend`, or redeploy on a host such as Vercel.
 

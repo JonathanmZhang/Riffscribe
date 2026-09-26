@@ -47,6 +47,8 @@ services:
       - DEMUCS_SHIFTS=1
       - MAX_SEPARATION_DURATION_SECONDS=120
       - SEPARATION_SOFT_TIME_LIMIT_SECONDS=900
+      # Torch intra-op threads; empty = half the container's CPUs.
+      - SEPARATION_TORCH_THREADS=
     depends_on:
       - redis
     volumes:

@@ -37,6 +37,14 @@ SEPARATION_SOFT_TIME_LIMIT_SECONDS = int(os.environ.get("SEPARATION_SOFT_TIME_LI
 
 GUITAR_SOURCE = "guitar"
 
+# Intra-op threads for Demucs inference, so separation doesn't compete with
+# the main worker's TensorFlow for every core. Default: half the CPUs
+# available to the container (on this 8-CPU setup that equals torch's own
+# default of one thread per physical core).
+SEPARATION_TORCH_THREADS = int(
+    os.environ.get("SEPARATION_TORCH_THREADS") or max(1, (os.cpu_count() or 2) // 2)
+)
+
 
 @functools.lru_cache(maxsize=None)
 def _load_model(name: str):
@@ -51,6 +59,9 @@ def separate_guitar_stem(input_path: str) -> tuple[np.ndarray, int]:
     stem shaped (channels, samples), clipped to [-1, 1]. Pure: no Redis or
     Celery, so scripts can call it directly.
     """
+    # Set per call rather than at import: the main worker imports this module
+    # too, and the setting only matters in the process that runs inference.
+    torch.set_num_threads(SEPARATION_TORCH_THREADS)
     model = _load_model(DEMUCS_MODEL)
     if GUITAR_SOURCE not in model.sources:
         raise ValueError(f"Demucs model {DEMUCS_MODEL!r} has no guitar stem (sources: {model.sources})")
@@ -122,13 +133,14 @@ def separate_guitar(job_id: str) -> str:
         audio_seconds = stem.shape[1] / sample_rate
         logger.info(
             "separate_guitar: job %s separated %.1fs of audio in %.1fs (real-time factor %.2f, "
-            "model %s, shifts %d, model load %.1fs)",
+            "model %s, shifts %d, torch threads %d, model load %.1fs)",
             job_id,
             audio_seconds,
             separation_seconds,
             separation_seconds / audio_seconds if audio_seconds else 0.0,
             DEMUCS_MODEL,
             DEMUCS_SHIFTS,
+            torch.get_num_threads(),
             load_seconds,
         )
 

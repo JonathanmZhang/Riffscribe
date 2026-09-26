@@ -160,6 +160,8 @@ MAX_SEPARATION_DURATION_SECONDS=120        # isolate_guitar jobs with longer
   both worker services
 SEPARATION_SOFT_TIME_LIMIT_SECONDS=900     # separate_guitar's soft time
   limit (the other tasks keep 120s)
+SEPARATION_TORCH_THREADS=                  # torch intra-op threads for
+  Demucs; empty/unset = half the container's CPUs
 
 ## 4. Current Build Status
 
