@@ -15,27 +15,40 @@ logger = logging.getLogger(__name__)
 CONFIDENCE_THRESHOLD = float(os.environ.get("BASIC_PITCH_CONFIDENCE_THRESHOLD", "0.5"))
 
 
+def detect_note_events(audio_path: str) -> tuple[list[dict], dict]:
+    """Runs Basic Pitch on audio_path and returns (every note event, before
+    any confidence filter, and the raw model output). Each event has pitch,
+    midi, start_time, end_time and amplitude. Pure: used by extract_notes and
+    by the chord inspection/evaluation scripts, which need the events the
+    filter drops and the model's per-frame activations.
+    """
+    model_output, _, note_events = predict(audio_path, ICASSP_2022_MODEL_PATH)
+    events = [
+        {
+            "pitch": pretty_midi.note_number_to_name(pitch_midi),
+            "midi": int(pitch_midi),
+            "start_time": start_time,
+            "end_time": end_time,
+            "amplitude": float(amplitude),
+        }
+        for start_time, end_time, pitch_midi, amplitude, _pitch_bends in note_events
+    ]
+    return events, model_output
+
+
 def extract_notes(audio_path: str) -> tuple[int, list[dict]]:
     """Runs Basic Pitch on audio_path and applies the confidence filter.
     Returns (raw note count, kept notes in raw_note_events shape). Pure: no
     Redis/Celery, so scripts/ab_separation.py runs exactly the same
     extraction as the pipeline.
     """
-    _, _, note_events = predict(audio_path, ICASSP_2022_MODEL_PATH)
-
-    kept = []
-    for start_time, end_time, pitch_midi, amplitude, _pitch_bends in note_events:
-        if amplitude < CONFIDENCE_THRESHOLD:
-            continue
-        kept.append(
-            {
-                "pitch": pretty_midi.note_number_to_name(pitch_midi),
-                "start_time": start_time,
-                "end_time": end_time,
-                "amplitude": float(amplitude),
-            }
-        )
-    return len(note_events), kept
+    events, _ = detect_note_events(audio_path)
+    kept = [
+        {key: event[key] for key in ("pitch", "start_time", "end_time", "amplitude")}
+        for event in events
+        if event["amplitude"] >= CONFIDENCE_THRESHOLD
+    ]
+    return len(events), kept
 
 
 def _estimate_tempo_bpm(audio_path: str) -> int:
