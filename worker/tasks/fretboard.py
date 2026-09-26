@@ -20,11 +20,6 @@ MAX_FRET = 20
 # same status as the cost-function constants.
 CHORD_ONSET_TOLERANCE_SECONDS = 0.15
 
-# How notes are grouped into steps (tab columns); see _group_into_steps and
-# _split_conflicting. Chosen from the chord eval (scripts/regression_check).
-GROUPING = "split"
-SPLIT_MIN_SPREAD_SECONDS = 0.08
-
 
 def _candidates_for_pitch(pitch_midi: int) -> list[tuple[int, int]]:
     """Every valid (string, fret) pair in 0-20 that produces this MIDI pitch."""
@@ -180,25 +175,16 @@ def _cheapest_drop_set(notes: list[dict], pitches: list[int]) -> list[int]:
     return list(range(len(notes) - 1))
 
 
-def _group_into_steps(notes: list[dict], grouping: str = "anchor") -> list[list[dict]]:
+def _group_into_steps(notes: list[dict]) -> list[list[dict]]:
     """Groups simultaneous notes (chords) together; each group is processed
     as one DP step.
-
-    grouping "anchor" (and "split"): a note joins the current group if it
-    starts within CHORD_ONSET_TOLERANCE_SECONDS of the group's FIRST note.
-    "gap:<s>": additionally starts a new group whenever the gap to the
-    previous note exceeds <s> seconds (the same total-spread cap applies).
     """
-    max_gap = float(grouping.split(":", 1)[1]) if grouping.startswith("gap:") else None
     steps: list[list[dict]] = []
     current_group: list[dict] = []
     group_start = None
 
     for note in sorted(notes, key=lambda n: n["start_time"]):
-        if current_group and (
-            note["start_time"] - group_start > CHORD_ONSET_TOLERANCE_SECONDS
-            or (max_gap is not None and note["start_time"] - current_group[-1]["start_time"] > max_gap)
-        ):
+        if current_group and note["start_time"] - group_start > CHORD_ONSET_TOLERANCE_SECONDS:
             steps.append(current_group)
             current_group = []
             group_start = None
@@ -210,24 +196,6 @@ def _group_into_steps(notes: list[dict], grouping: str = "anchor") -> list[list[
         steps.append(current_group)
 
     return steps
-
-
-def _split_conflicting(group: list[dict], min_spread: float = SPLIT_MIN_SPREAD_SECONDS) -> list[list[dict]]:
-    """For grouping "split": when two in-range notes of a group need the same
-    string AND the group's onset spread exceeds min_spread, it's more likely
-    two consecutive chords/notes merged by a late-detected note than one
-    chord, so split it at its largest onset gap (recursively) instead of
-    letting _make_voiceable drop a note."""
-    if len(group) < 2:
-        return [group]
-    ordered = sorted(group, key=lambda n: n["start_time"])
-    spread = ordered[-1]["start_time"] - ordered[0]["start_time"]
-    in_range = [p for p in (pretty_midi.note_name_to_number(n["pitch"]) for n in ordered) if _candidates_for_pitch(p)]
-    if spread <= min_spread or len(in_range) < 2 or _voice_chord(in_range) is not None:
-        return [group]
-    gaps = [b["start_time"] - a["start_time"] for a, b in zip(ordered, ordered[1:])]
-    cut = gaps.index(max(gaps)) + 1
-    return _split_conflicting(ordered[:cut], min_spread) + _split_conflicting(ordered[cut:], min_spread)
 
 
 def map_notes_to_positions(notes: list[dict]) -> list[dict]:
@@ -248,7 +216,7 @@ def map_notes_to_positions(notes: list[dict]) -> list[dict]:
     return map_notes_with_steps(notes)[0]
 
 
-def map_notes_with_steps(notes: list[dict], grouping: str = GROUPING) -> tuple[list[dict], list[list[dict]]]:
+def map_notes_with_steps(notes: list[dict]) -> tuple[list[dict], list[list[dict]]]:
     """map_notes_to_positions, also returning the groups (tab columns) the
     notes were placed in, including notes later dropped as unplayable. For
     the measurement scripts, so they see exactly the grouping the mapper
@@ -265,10 +233,7 @@ def map_notes_with_steps(notes: list[dict], grouping: str = GROUPING) -> tuple[l
     groups: list[list[dict]] = []
     steps: list[list[dict]] = []
     step_candidates: list[list[list[tuple[int, int]]]] = []
-    raw_steps = _group_into_steps(notes, grouping)
-    if grouping == "split":
-        raw_steps = [part for step in raw_steps for part in _split_conflicting(step)]
-    for raw_step in raw_steps:
+    for raw_step in _group_into_steps(notes):
         groups.append(raw_step)
         step_notes, voicing = _make_voiceable(raw_step)
         if len(step_notes) == 1:

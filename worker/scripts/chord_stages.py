@@ -55,7 +55,6 @@ class StageConfig:
 
     threshold: float = CONFIDENCE_THRESHOLD
     chord_floor: float = transcribe.CHORD_TONE_CONFIDENCE_FLOOR
-    grouping: str = fretboard.GROUPING
 
     def describe(self) -> str:
         return ", ".join(f"{f.name}={getattr(self, f.name)}" for f in dataclasses.fields(self))
@@ -172,7 +171,7 @@ def run_stages(events: list[dict], config: StageConfig = PIPELINE) -> dict:
     fretboard_logger.addHandler(handler)
     fretboard_logger.propagate = False
     try:
-        mapped, groups = fretboard.map_notes_with_steps(kept, grouping=config.grouping)
+        mapped, groups = fretboard.map_notes_with_steps(kept)
     finally:
         fretboard_logger.removeHandler(handler)
         fretboard_logger.propagate = previous_propagate
