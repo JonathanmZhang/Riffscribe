@@ -5,7 +5,8 @@ import yt_dlp
 
 from tasks.audio_io import ensure_decodable_audio, job_dir, normalize_to_wav, probe_duration_seconds
 from tasks.celery_app import app
-from tasks.storage import update_job
+from tasks.separation_limits import separation_duration_error
+from tasks.storage import get_job, update_job
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +58,14 @@ def ingest_audio(job_id: str, source: dict) -> str:
                 f"audio is {duration:.0f} seconds long, which exceeds the "
                 f"{MAX_AUDIO_DURATION_SECONDS:.0f} second limit"
             )
+
+        # Early separation cap: isolate_guitar is on the job record (set by the
+        # API), so reject audio separate_guitar would refuse anyway, before
+        # spending time extracting/normalizing it.
+        if get_job(job_id).get("isolate_guitar"):
+            too_long = separation_duration_error(duration)
+            if too_long:
+                raise ValueError(too_long)
 
         # Video containers (mp4/mov/webm) and m4a are extracted to a WAV with
         # ffmpeg first (audio track only); that WAV is also what

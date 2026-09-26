@@ -20,6 +20,7 @@ from demucs.pretrained import get_model
 
 from tasks.audio_io import job_dir, normalize_to_wav
 from tasks.celery_app import app
+from tasks.separation_limits import separation_duration_error
 from tasks.storage import get_job, update_job
 
 logger = logging.getLogger(__name__)
@@ -30,8 +31,8 @@ logger = logging.getLogger(__name__)
 DEMUCS_MODEL = os.environ.get("DEMUCS_MODEL", "htdemucs_6s")
 DEMUCS_SHIFTS = int(os.environ.get("DEMUCS_SHIFTS", "1"))
 # Separation is far slower than the rest of the pipeline on CPU, so it has
-# its own, tighter duration cap and a longer time limit than the 120s tasks.
-MAX_SEPARATION_DURATION_SECONDS = float(os.environ.get("MAX_SEPARATION_DURATION_SECONDS", "120"))
+# its own, tighter duration cap (tasks/separation_limits.py, also checked
+# early by ingest_audio) and a longer time limit than the 120s tasks.
 SEPARATION_SOFT_TIME_LIMIT_SECONDS = int(os.environ.get("SEPARATION_SOFT_TIME_LIMIT_SECONDS", "900"))
 
 GUITAR_SOURCE = "guitar"
@@ -95,13 +96,12 @@ def separate_guitar(job_id: str) -> str:
         if not source_path:
             raise ValueError(f"job {job_id} has no source_audio_path; ingest_audio must run first")
 
+        # Safety net: ingest_audio already rejects over-long audio for
+        # isolate_guitar jobs before normalizing.
         duration = job.get("source_duration_seconds")
-        if duration is not None and duration > MAX_SEPARATION_DURATION_SECONDS:
-            raise ValueError(
-                f"guitar isolation is limited to {MAX_SEPARATION_DURATION_SECONDS:.0f} seconds of "
-                f"audio, and this file is {duration:.0f} seconds long. Use a shorter clip, or "
-                "turn off \"Isolate guitar\"."
-            )
+        too_long = separation_duration_error(duration) if duration is not None else None
+        if too_long:
+            raise ValueError(too_long)
 
         load_start = time.perf_counter()
         _load_model(DEMUCS_MODEL)

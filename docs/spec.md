@@ -154,8 +154,10 @@ DEMUCS_MODEL=htdemucs_6s                   # must have a "guitar" source; only
   the default's weights are baked into the worker image
 DEMUCS_SHIFTS=1                            # Demucs random-shift passes;
   higher is slightly better quality and proportionally slower
-MAX_SEPARATION_DURATION_SECONDS=120        # longer audio fails the job at
-  the separating stage with a readable message
+MAX_SEPARATION_DURATION_SECONDS=120        # isolate_guitar jobs with longer
+  audio fail in ingest_audio right after the ffprobe duration check, with
+  a readable message (separate_guitar re-checks as a safety net); read by
+  both worker services
 SEPARATION_SOFT_TIME_LIMIT_SECONDS=900     # separate_guitar's soft time
   limit (the other tasks keep 120s)
 
