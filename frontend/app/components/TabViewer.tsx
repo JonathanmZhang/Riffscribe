@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, type RefObject } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import type { Note, TabResult } from "@/app/lib/api";
 
 // Display order top-to-bottom matches conventional tab notation: high e on
@@ -27,6 +27,13 @@ const STEP_TOLERANCE_SECONDS = 0.15;
 // fixes). So a column is highlighted this much before its start_time. This is
 // the only onset-offset adjustment in the frontend.
 export const ONSET_LEAD_SECONDS = 0.02;
+
+// Auto-follow keeps the current column this far into the visible tab
+// (from the left, after the string labels), so upcoming notes stay visible.
+const FOLLOW_ANCHOR = 1 / 3;
+// Time constant of the follow easing: ~63% of the way to the target per
+// FOLLOW_EASE_MS, independent of frame rate.
+const FOLLOW_EASE_MS = 120;
 
 interface TabStep {
   time: number;
@@ -85,17 +92,31 @@ export default function TabViewer({ result, audioRef }: TabViewerProps) {
 
   const rootRef = useRef<HTMLDivElement>(null);
   const tableRef = useRef<HTMLTableElement>(null);
+  const scrollerRef = useRef<HTMLDivElement>(null);
+
+  // Auto-follow: while audio plays, the tab scrolls so the current column
+  // sits FOLLOW_ANCHOR of the way into the visible area. Manually scrolling
+  // the tab pauses it (the Follow button, play and seek resume it).
+  // followingRef is read by the frame loop; the state only drives the button.
+  const [following, setFollowing] = useState(true);
+  const followingRef = useRef(true);
+  const resumeFollow = useCallback(() => {
+    followingRef.current = true;
+    setFollowing(true);
+  }, []);
 
   // Playhead: the highlighted column is the last one whose start (minus the
   // onset lead) has passed, kept until the next one starts. An
   // animation-frame loop reads audio.currentTime (timeupdate only fires ~4
   // times a second) and, when the column changes, moves the `is-active`
   // class between the cached cells of the two columns - no React re-render,
-  // so the change is painted in the same frame it's decided.
+  // so the change is painted in the same frame it's decided. The same loop
+  // drives auto-follow scrolling.
   useEffect(() => {
     const root = rootRef.current;
     const table = tableRef.current;
-    if (!root || !table) return;
+    const scroller = scrollerRef.current;
+    if (!root || !table || !scroller) return;
 
     const columns: Element[][] = steps.map(() => []);
     root.querySelectorAll<HTMLElement>("[data-col],[data-col-time],[data-note-col]").forEach((el) => {
@@ -113,20 +134,95 @@ export default function TabViewer({ result, audioRef }: TabViewerProps) {
       table.dataset.activeStep = String(index);
     };
 
-    const loop = () => {
+    // Geometry is cached and only re-measured when a ResizeObserver fires, so
+    // the frame loop never reads layout (no layout thrashing on long tabs).
+    const timeCells = columns.map((els) => els.find((el) => (el as HTMLElement).dataset.colTime !== undefined) as HTMLElement);
+    const geometry = { columnLeft: [] as number[], labelWidth: 0, viewWidth: 0, maxScroll: 0 };
+    const measure = () => {
+      geometry.columnLeft = timeCells.map((cell) => cell?.offsetLeft ?? 0);
+      geometry.labelWidth = (table.querySelector("td") as HTMLElement | null)?.offsetWidth ?? 0;
+      geometry.viewWidth = scroller.clientWidth;
+      geometry.maxScroll = scroller.scrollWidth - scroller.clientWidth;
+    };
+    measure();
+    const resizeObserver = new ResizeObserver(measure);
+    resizeObserver.observe(scroller);
+    resizeObserver.observe(table);
+
+    // Where the loop last put scrollLeft; a scroll event that lands elsewhere
+    // was the user's (e.g. dragging the scrollbar).
+    let scrollLeft = scroller.scrollLeft;
+    let lastFrameTime = 0;
+    const targetFor = (index: number) => {
+      const visible = geometry.viewWidth - geometry.labelWidth;
+      const left = geometry.columnLeft[index] - geometry.labelWidth - visible * FOLLOW_ANCHOR;
+      return Math.min(Math.max(left, 0), Math.max(geometry.maxScroll, 0));
+    };
+
+    const pauseFollow = () => {
+      if (!followingRef.current) return;
+      followingRef.current = false;
+      setFollowing(false);
+    };
+    const onUserScrollIntent = (event: Event) => {
+      // Pointer presses on the scroller itself are its scrollbar; presses on
+      // cells aren't scrolling.
+      if (event.type === "pointerdown" && event.target !== scroller) return;
+      pauseFollow();
+    };
+    const onScroll = () => {
+      if (Math.abs(scroller.scrollLeft - scrollLeft) > 2) pauseFollow();
+      scrollLeft = scroller.scrollLeft;
+    };
+    const intentEvents = ["wheel", "touchstart", "keydown", "pointerdown"] as const;
+    intentEvents.forEach((type) => scroller.addEventListener(type, onUserScrollIntent, { passive: true }));
+    scroller.addEventListener("scroll", onScroll, { passive: true });
+
+    const audio = audioRef?.current;
+    const onResume = () => {
+      scrollLeft = scroller.scrollLeft;
+      resumeFollow();
+    };
+    audio?.addEventListener("play", onResume);
+    audio?.addEventListener("seeked", onResume);
+
+    const loop = (now: number) => {
       frame = requestAnimationFrame(loop);
-      const audio = audioRef?.current;
-      if (!audio) return;
+      const dt = lastFrameTime ? Math.min(now - lastFrameTime, 100) : 16;
+      lastFrameTime = now;
+      const media = audioRef?.current;
+      if (!media) return;
       setActive(
-        audio.currentTime > 0 || !audio.paused ? currentStepIndex(stepTimes, audio.currentTime + ONSET_LEAD_SECONDS) : -1,
+        media.currentTime > 0 || !media.paused ? currentStepIndex(stepTimes, media.currentTime + ONSET_LEAD_SECONDS) : -1,
       );
+
+      if (!followingRef.current || active < 0) return;
+      const target = targetFor(active);
+      const distance = target - scrollLeft;
+      if (Math.abs(distance) < 0.5) return;
+      // Ease toward the target (time-based, so smooth at any frame rate and
+      // playback speed); jump when it's more than a screen away (a seek).
+      const next = Math.abs(distance) > geometry.viewWidth
+        ? target
+        : scrollLeft + distance * (1 - Math.exp(-dt / FOLLOW_EASE_MS));
+      scrollLeft = next;
+      scroller.scrollLeft = next;
     };
     frame = requestAnimationFrame(loop);
     return () => {
       cancelAnimationFrame(frame);
+      resizeObserver.disconnect();
+      intentEvents.forEach((type) => scroller.removeEventListener(type, onUserScrollIntent));
+      scroller.removeEventListener("scroll", onScroll);
+      audio?.removeEventListener("play", onResume);
+      audio?.removeEventListener("seeked", onResume);
       setActive(-1);
     };
-  }, [audioRef, steps, stepTimes]);
+  }, [audioRef, steps, stepTimes, resumeFollow]);
+
+  const followNow = () => {
+    resumeFollow();
+  };
 
   if (steps.length === 0) {
     return <p className="text-slate-500">No notes detected in this audio.</p>;
@@ -150,7 +246,17 @@ export default function TabViewer({ result, audioRef }: TabViewerProps) {
 
       {/* Guitar-tab-style grid: one row per string (high e on top, per
           convention), one column per time step. */}
-      <div className="overflow-x-auto rounded-lg border border-slate-200 bg-slate-50">
+      <div className="relative">
+      {!following && (
+        <button
+          type="button"
+          onClick={followNow}
+          className="absolute -top-9 right-0 rounded-md bg-indigo-600 px-3 py-1 text-xs font-semibold text-white shadow-sm hover:bg-indigo-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600"
+        >
+          Follow
+        </button>
+      )}
+      <div ref={scrollerRef} className="overflow-x-auto rounded-lg border border-slate-200 bg-slate-50">
         <table ref={tableRef} className="border-collapse font-mono text-sm" data-active-step={-1}>
           <tbody>
             {STRING_DISPLAY_ORDER.map((string) => (
@@ -185,6 +291,7 @@ export default function TabViewer({ result, audioRef }: TabViewerProps) {
             </tr>
           </tbody>
         </table>
+      </div>
       </div>
 
       {/* Exact per-note detail, in time order. */}
