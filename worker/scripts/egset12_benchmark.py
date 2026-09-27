@@ -67,6 +67,43 @@ FAST_IOI_S = 60 / 110 / 4
 MODERATE_DRIVE_DB = 12
 HEAVY_DRIVE_DB = 20
 
+# Split by performance for tuning the fretboard mapper without overfitting:
+# constants are tuned on TUNING only, HELDOUT is the real result. Pairs of
+# similar performances (open-position 06/10, up-neck chords 04/08,
+# single-note lines 05/07, slow mixed 01/03, fast chordal 02/12, high-neck
+# mixed 09/11) are split across the halves, balancing note counts (766 / 801).
+TUNING_PERFORMANCES = ["02", "03", "04", "05", "10", "11"]
+HELDOUT_PERFORMANCES = ["01", "06", "07", "08", "09", "12"]
+
+# Playability proxy: the fretting hand covers HAND_WINDOW frets from the
+# index finger (one more with a stretch).
+HAND_WINDOW = 4
+
+
+def hand_stats(columns: list[list[int]], duration: float) -> dict:
+    """Follows a hand through a tab's columns (the fretted frets of each
+    column, in time order): it stays put while each column fits within the
+    window from the index finger (+1 stretch), otherwise shifts the least
+    distance that covers the column. Open strings never force a shift."""
+    hand, shifts, distance = None, 0, 0
+    for frets in columns:
+        fretted = [f for f in frets if f > 0]
+        if not fretted:
+            continue
+        lo, hi = min(fretted), max(fretted)
+        if hand is None:
+            hand = lo
+            continue
+        if hand <= lo and hi <= hand + HAND_WINDOW:
+            continue
+        options = range(max(hi - HAND_WINDOW, 1), max(lo, hi - HAND_WINDOW, 1) + 1)
+        new_hand = min(options, key=lambda h: abs(h - hand))
+        shifts += 1
+        distance += abs(new_hand - hand)
+        hand = new_hand
+    minutes = duration / 60 if duration else 1
+    return {"shifts": shifts, "shift_frets": distance, "minutes": minutes}
+
 
 # ------------------------------------------------------------ ground truth
 
@@ -247,14 +284,27 @@ def _match(truth: list[dict], tab: list[dict]) -> dict[int, int]:
     return matches
 
 
-def evaluate(config: StageConfig = PIPELINE, benchmark: dict | None = None) -> dict:
+def evaluate(config: StageConfig = PIPELINE, benchmark: dict | None = None,
+             performances: list[str] | None = None) -> dict:
+    """Scores every performance (or only `performances`). Besides the
+    per-tone/segment-type metrics, result["playability"][tone] has hand
+    shifts per minute and average shift distance for the tab, and for the
+    player's own tab ("truth") as the reference."""
     benchmark = benchmark or json.load(open(BENCHMARK_JSON))
     counts: dict[tuple[str, str], dict] = {}
+    play: dict[str, dict] = {}
 
     def bucket(tone, kind):
         return counts.setdefault((tone, kind), {"truth": 0, "tab": 0, "matched": 0, "position": 0})
 
+    def add_play(tone, who, stats):
+        p = play.setdefault(tone, {}).setdefault(who, {"shifts": 0, "shift_frets": 0, "minutes": 0.0})
+        for k in p:
+            p[k] += stats[k]
+
     for perf in benchmark["performances"]:
+        if performances is not None and perf["performance"] not in performances:
+            continue
         truth, _ = load_truth(perf["performance"])
         segments = perf["segments"]
 
@@ -283,6 +333,12 @@ def evaluate(config: StageConfig = PIPELINE, benchmark: dict | None = None) -> d
                 for kind in (seg_type(n["onset"]), "all"):
                     bucket(tone, kind)["tab"] += 1
 
+            tab_columns = [[stages["mapping"]["positions"][k][1] for k in (
+                (note["start_time"], note["pitch"]) for note in group) if k in stages["mapping"]["positions"]]
+                for group in stages["groups"]]
+            add_play(tone, "tab", hand_stats(tab_columns, perf["duration"]))
+            add_play(tone, "truth", hand_stats([[n["fret"] for n in c] for c in _columns(truth)], perf["duration"]))
+
     result = {}
     for (tone, kind), b in counts.items():
         result.setdefault(tone, {})[kind] = {
@@ -291,6 +347,12 @@ def evaluate(config: StageConfig = PIPELINE, benchmark: dict | None = None) -> d
             "pitch_precision": round(b["matched"] / b["tab"], 3) if b["tab"] else None,
             "position_agreement": round(b["position"] / b["matched"], 3) if b["matched"] else None,
         }
+    result["playability"] = {
+        tone: {who: {"shifts_per_minute": round(p["shifts"] / p["minutes"], 1),
+                     "avg_shift_frets": round(p["shift_frets"] / p["shifts"], 2) if p["shifts"] else 0.0}
+               for who, p in by_who.items()}
+        for tone, by_who in play.items()
+    }
     return result
 
 
