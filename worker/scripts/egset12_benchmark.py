@@ -349,11 +349,36 @@ def evaluate(config: StageConfig = PIPELINE, benchmark: dict | None = None,
         }
     result["playability"] = {
         tone: {who: {"shifts_per_minute": round(p["shifts"] / p["minutes"], 1),
-                     "avg_shift_frets": round(p["shift_frets"] / p["shifts"], 2) if p["shifts"] else 0.0}
+                     "avg_shift_frets": round(p["shift_frets"] / p["shifts"], 2) if p["shifts"] else 0.0,
+                     **p}  # raw sums, so results can be pooled across performance subsets
                for who, p in by_who.items()}
         for tone, by_who in play.items()
     }
     return result
+
+
+def pool(results: list[dict]) -> dict:
+    """Combines evaluate() results over disjoint performance subsets (e.g.
+    the held-out folds of a cross-validation) by summing their counts."""
+    pooled: dict = {}
+    for tone in TONES:
+        for kind in ["all"] + SEGMENT_TYPES:
+            b = {k: sum(r[tone][kind][k] for r in results if kind in r.get(tone, {}))
+                 for k in ("truth", "tab", "matched", "position")}
+            pooled.setdefault(tone, {})[kind] = {
+                **b,
+                "pitch_recall": round(b["matched"] / b["truth"], 3) if b["truth"] else None,
+                "pitch_precision": round(b["matched"] / b["tab"], 3) if b["tab"] else None,
+                "position_agreement": round(b["position"] / b["matched"], 3) if b["matched"] else None,
+            }
+    pooled["playability"] = {}
+    for tone in TONES:
+        for who in ("tab", "truth"):
+            p = {k: sum(r["playability"][tone][who][k] for r in results) for k in ("shifts", "shift_frets", "minutes")}
+            pooled["playability"].setdefault(tone, {})[who] = {
+                "shifts_per_minute": round(p["shifts"] / p["minutes"], 1),
+                "avg_shift_frets": round(p["shift_frets"] / p["shifts"], 2) if p["shifts"] else 0.0, **p}
+    return pooled
 
 
 def print_eval(result: dict, base: dict | None = None) -> None:

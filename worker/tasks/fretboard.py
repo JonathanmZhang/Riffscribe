@@ -37,27 +37,36 @@ class HandCosts:
     """Cost terms of the hand-position mapper (spec 3.5). The fretting hand
     sits with its index finger at some fret h and covers `span` frets
     (h .. h+span-1) without moving; all values are in the same arbitrary
-    units. Tuned on the EGSet12 tuning half (scripts/tune_hand_mapper.py)."""
+    units. Tuned on all 12 EGSet12 performances with scripts/tune_hand_mapper.py
+    (2-fold cross-validation by performance, same search: held-out position
+    agreement 53.2/48.3/45.0% -> 55.8/49.7/44.7% clean/moderate/heavy vs the
+    previous last-position mapper)."""
 
-    span: int = 4
+    span: int = 5
     # A fretted note one fret outside the span (pinky stretch, or the index
     # finger reaching back one fret).
-    stretch_cost: float = 0.25
+    stretch_cost: float = 0.5
     # Any fretted note further outside the span, per note.
-    out_of_span_cost: float = 4.0
+    out_of_span_cost: float = 10.0
     # Moving the hand: a fixed cost for any shift plus a per-fret cost, so the
     # tab stays in one region until the music requires a move.
-    shift_cost: float = 4.0
+    shift_cost: float = 8.0
     shift_per_fret: float = 0.5
     # Per open string played (open strings never constrain the hand).
-    open_string_cost: float = 0.0
+    open_string_cost: float = 0.5
+    # Open position: with the index finger at or below this fret, each open
+    # string gets this bonus over playing the same pitch fretted, so open
+    # notes ring the way guitarists play open chords. Only applies near the
+    # nut, so it doesn't pull up-the-neck passages down.
+    open_position_max_hand: int = 3
+    open_position_bonus: float = 0.5
     # Weak preference for lower hand positions, per fret of h. Replaces the
     # old lexicographic lowest-fret tie-break, which pulled whole passages
     # toward the nut.
     fret_height_cost: float = 0.02
     # Chord voicings are only considered if their fretted notes span at most
     # this many frets (the exhaustive lowest-fret voicing is the fallback).
-    max_voicing_span: int = 5
+    max_voicing_span: int = 4
 
 
 HAND_COSTS = HandCosts()
@@ -100,6 +109,8 @@ def _placement_cost(positions: list[tuple[int, int]], hand: int, costs: HandCost
     for _string, fret in positions:
         if fret == 0:
             cost += costs.open_string_cost
+            if hand <= costs.open_position_max_hand:
+                cost -= costs.open_position_bonus
         elif hand <= fret < hand + costs.span:
             continue
         elif fret == hand + costs.span or fret == hand - 1:
