@@ -33,6 +33,10 @@ services:
       # transcribe: notes >= this also kept when they start with a confident
       # (>= 0.5) note, i.e. chord tones; >= 0.5 disables.
       - CHORD_TONE_CONFIDENCE_FLOOR=0.45
+      # transcribe: Basic Pitch's own note-creation settings (tuned on EGSet12).
+      - BASIC_PITCH_ONSET_THRESHOLD=0.5
+      - BASIC_PITCH_FRAME_THRESHOLD=0.4
+      - BASIC_PITCH_MIN_NOTE_LENGTH_MS=80
     depends_on:
       - redis
     volumes:

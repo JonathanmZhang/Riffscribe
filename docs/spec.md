@@ -140,6 +140,16 @@ CHORD_TONE_CONFIDENCE_FLOOR=0.45   # worker (transcribe): a note below the
   within the chord onset window (150ms) of it, i.e. a chord tone. Values >=
   the threshold disable it. 0.45 chosen from the chord eval: full recall on
   the real tab-sample clip; lower values mostly add octave errors there.
+  Re-checked on the EGSet12 benchmark with the settings below: still the
+  best balance (0.40 adds ~2-4pt recall but loses precision on real audio).
+BASIC_PITCH_ONSET_THRESHOLD=0.5      # worker (transcribe): Basic Pitch's own
+BASIC_PITCH_FRAME_THRESHOLD=0.4      #   note-creation settings, passed to
+BASIC_PITCH_MIN_NOTE_LENGTH_MS=80    #   model_output_to_notes. predict()'s
+  defaults are 0.5 / 0.3 / 127.7ms; 0.4 / 80ms chosen on the EGSet12
+  real-guitar benchmark (recall 66.6->71.9% clean, 49.5->55.8% moderate,
+  34.5->38.5% heavy distortion; precision -2.4/-3.5/-6.8pt; fast passages
+  +12 to +17pt). The old 128ms minimum is longer than a 16th note at
+  ~120bpm. Lowering the onset threshold mainly adds false notes.
 
 # Backend: comma-separated explicit allowlist of frontend origins for CORS.
 # A "*" wildcard is rejected at startup.

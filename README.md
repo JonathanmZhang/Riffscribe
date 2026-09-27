@@ -109,6 +109,9 @@ You don't need to change anything to run locally: `docker-compose.yml` already s
 | `CORS_ALLOWED_ORIGINS` | backend | `http://localhost:3000` | Comma-separated list of allowed frontend origins. Wildcards are rejected. |
 | `MAX_AUDIO_DURATION_SECONDS` | worker | `300` | Longest audio accepted |
 | `CHORD_TONE_CONFIDENCE_FLOOR` | worker | `0.45` | Keeps a lower-confidence note (at or above this value) when it starts together with a confident note, so the quieter tones of a strummed chord aren't dropped. Set it to `0.5` or higher to turn this off. |
+| `BASIC_PITCH_ONSET_THRESHOLD` | worker | `0.5` | Basic Pitch's onset threshold. Lower values mostly add false notes. |
+| `BASIC_PITCH_FRAME_THRESHOLD` | worker | `0.4` | Basic Pitch's frame threshold. The library default is 0.3; 0.4 was chosen on the real-guitar benchmark. |
+| `BASIC_PITCH_MIN_NOTE_LENGTH_MS` | worker | `80` | The shortest note Basic Pitch reports. The library default is 128 ms, which is longer than a 16th note at ~120 bpm, so fast passages lost notes. |
 | `DEMUCS_MODEL` | worker-separation | `htdemucs_6s` | Separation model. Must have a guitar stem. Only the default's weights are built into the image. |
 | `DEMUCS_SHIFTS` | worker-separation | `1` | Demucs shift passes. Higher is slightly better and proportionally slower. |
 | `MAX_SEPARATION_DURATION_SECONDS` | worker, worker-separation | `120` | Longest audio accepted with **Isolate guitar**. Longer audio fails during ingest, within seconds and before any processing, with a clear message. |

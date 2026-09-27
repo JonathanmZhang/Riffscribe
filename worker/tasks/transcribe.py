@@ -20,10 +20,13 @@ CONFIDENCE_THRESHOLD = float(os.environ.get("BASIC_PITCH_CONFIDENCE_THRESHOLD", 
 # Lower confidence bar for notes that start with a confident note (chord
 # tones); see select_notes. Values >= CONFIDENCE_THRESHOLD disable it.
 CHORD_TONE_CONFIDENCE_FLOOR = float(os.environ.get("CHORD_TONE_CONFIDENCE_FLOOR", "0.45"))
-# Basic Pitch's own note-creation settings (predict()'s defaults).
+# Basic Pitch's own note-creation settings. predict()'s defaults are 0.5 / 0.3 /
+# 127.7ms; 0.4 frame and 80ms were chosen on the EGSet12 real-guitar benchmark
+# (scripts/egset12_benchmark.py): the 128ms minimum is longer than a 16th note
+# at ~120bpm and was dropping fast notes. Lower onset thresholds cost precision.
 BASIC_PITCH_ONSET_THRESHOLD = float(os.environ.get("BASIC_PITCH_ONSET_THRESHOLD", "0.5"))
-BASIC_PITCH_FRAME_THRESHOLD = float(os.environ.get("BASIC_PITCH_FRAME_THRESHOLD", "0.3"))
-BASIC_PITCH_MIN_NOTE_LENGTH_MS = float(os.environ.get("BASIC_PITCH_MIN_NOTE_LENGTH_MS", "127.7"))
+BASIC_PITCH_FRAME_THRESHOLD = float(os.environ.get("BASIC_PITCH_FRAME_THRESHOLD", "0.4"))
+BASIC_PITCH_MIN_NOTE_LENGTH_MS = float(os.environ.get("BASIC_PITCH_MIN_NOTE_LENGTH_MS", "80"))
 
 
 def notes_from_model_output(
