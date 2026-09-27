@@ -59,6 +59,8 @@ class StageConfig:
     bp_onset: float = transcribe.BASIC_PITCH_ONSET_THRESHOLD
     bp_frame: float = transcribe.BASIC_PITCH_FRAME_THRESHOLD
     bp_min_note_ms: float = transcribe.BASIC_PITCH_MIN_NOTE_LENGTH_MS
+    # Fretboard mapper cost terms (scripts/tune_hand_mapper.py varies these).
+    hand_costs: fretboard.HandCosts = fretboard.HAND_COSTS
 
     def describe(self) -> str:
         return ", ".join(f"{f.name}={getattr(self, f.name)}" for f in dataclasses.fields(self))
@@ -68,15 +70,18 @@ PIPELINE = StageConfig()
 
 
 def add_config_args(parser) -> None:
-    """Adds one --flag per StageConfig field (default: the pipeline's)."""
+    """Adds one --flag per scalar StageConfig field (default: the pipeline's)."""
     for field in dataclasses.fields(StageConfig):
+        if dataclasses.is_dataclass(field.default):
+            continue
         parser.add_argument(f"--{field.name.replace('_', '-')}", type=type(field.default) if field.default is not None
                             else float, default=field.default,
                             help=f"post-detection setting (pipeline default {field.default})")
 
 
 def config_from_args(args) -> StageConfig:
-    return StageConfig(**{f.name: getattr(args, f.name) for f in dataclasses.fields(StageConfig)})
+    return StageConfig(**{f.name: getattr(args, f.name) for f in dataclasses.fields(StageConfig)
+                          if not dataclasses.is_dataclass(f.default)})
 
 
 # ------------------------------------------------------- stage 0 + 1: detect
@@ -190,7 +195,7 @@ def run_stages(events: list[dict], config: StageConfig = PIPELINE, activations: 
     fretboard_logger.addHandler(handler)
     fretboard_logger.propagate = False
     try:
-        mapped, groups = fretboard.map_notes_with_steps(kept)
+        mapped, groups = fretboard.map_notes_with_steps(kept, config.hand_costs)
     finally:
         fretboard_logger.removeHandler(handler)
         fretboard_logger.propagate = previous_propagate

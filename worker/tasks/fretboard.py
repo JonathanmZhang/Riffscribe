@@ -1,3 +1,4 @@
+import dataclasses
 import logging
 from itertools import combinations
 
@@ -31,33 +32,87 @@ def _candidates_for_pitch(pitch_midi: int) -> list[tuple[int, int]]:
     return candidates
 
 
-def _position_cost(prev: tuple[int, int], curr: tuple[int, int]) -> float:
-    """Cost of moving from one fretboard position to the next, per spec 3.5."""
-    s1, f1 = prev
-    s2, f2 = curr
-    cost = abs(f1 - f2)
-    if f2 == 0:
-        cost -= 2  # open-string bonus: reduces cost
-    if abs(f1 - f2) > 4:
-        cost += 3
-    if s1 == s2:
-        cost += 1
+@dataclasses.dataclass(frozen=True)
+class HandCosts:
+    """Cost terms of the hand-position mapper (spec 3.5). The fretting hand
+    sits with its index finger at some fret h and covers `span` frets
+    (h .. h+span-1) without moving; all values are in the same arbitrary
+    units. Tuned on the EGSet12 tuning half (scripts/tune_hand_mapper.py)."""
+
+    span: int = 4
+    # A fretted note one fret outside the span (pinky stretch, or the index
+    # finger reaching back one fret).
+    stretch_cost: float = 0.25
+    # Any fretted note further outside the span, per note.
+    out_of_span_cost: float = 4.0
+    # Moving the hand: a fixed cost for any shift plus a per-fret cost, so the
+    # tab stays in one region until the music requires a move.
+    shift_cost: float = 4.0
+    shift_per_fret: float = 0.5
+    # Per open string played (open strings never constrain the hand).
+    open_string_cost: float = 0.0
+    # Weak preference for lower hand positions, per fret of h. Replaces the
+    # old lexicographic lowest-fret tie-break, which pulled whole passages
+    # toward the nut.
+    fret_height_cost: float = 0.02
+    # Chord voicings are only considered if their fretted notes span at most
+    # this many frets (the exhaustive lowest-fret voicing is the fallback).
+    max_voicing_span: int = 5
+
+
+HAND_COSTS = HandCosts()
+# Index-finger positions the DP considers.
+HAND_POSITIONS = range(1, MAX_FRET - HAND_COSTS.span + 2)
+
+
+def _chord_voicings(pitches: list[int], max_span: int) -> list[list[tuple[int, int]]]:
+    """Every assignment of the pitches to distinct strings whose fretted
+    notes span at most max_span frets (open strings excluded from the span),
+    in the same order as `pitches`."""
+    options = [_candidates_for_pitch(p) for p in pitches]
+    order = sorted(range(len(pitches)), key=lambda i: len(options[i]))
+    found: list[list[tuple[int, int]]] = []
+    chosen: dict[int, tuple[int, int]] = {}
+
+    def recurse(k: int, used: set[int], lo: int, hi: int) -> None:
+        if k == len(order):
+            found.append([chosen[i] for i in range(len(pitches))])
+            return
+        i = order[k]
+        for string, fret in options[i]:
+            if string in used:
+                continue
+            new_lo, new_hi = (min(lo, fret), max(hi, fret)) if fret > 0 else (lo, hi)
+            if fret > 0 and new_hi - new_lo > max_span:
+                continue
+            chosen[i] = (string, fret)
+            used.add(string)
+            recurse(k + 1, used, new_lo, new_hi)
+            used.discard(string)
+
+    recurse(0, set(), MAX_FRET + 1, -1)
+    return found
+
+
+def _placement_cost(positions: list[tuple[int, int]], hand: int, costs: HandCosts) -> float:
+    """Cost of playing one step's positions with the index finger at `hand`."""
+    cost = costs.fret_height_cost * hand
+    for _string, fret in positions:
+        if fret == 0:
+            cost += costs.open_string_cost
+        elif hand <= fret < hand + costs.span:
+            continue
+        elif fret == hand + costs.span or fret == hand - 1:
+            cost += costs.stretch_cost
+        else:
+            cost += costs.out_of_span_cost
     return cost
 
 
-def _transition_cost(prev_positions: list[tuple[int, int]], curr_positions: list[tuple[int, int]]) -> float:
-    """Generalizes the single-position cost formula to chord steps: the
-    average pairwise cost across every note in the previous step and every
-    note in the current step. For the monophonic case (the common one) each
-    list has exactly one element, so this reduces to the spec's formula
-    exactly.
-    """
-    pairwise = [_position_cost(prev, curr) for prev in prev_positions for curr in curr_positions]
-    return sum(pairwise) / len(pairwise)
-
-
-def _candidate_fret_sum(positions: list[tuple[int, int]]) -> int:
-    return sum(fret for _, fret in positions)
+def _shift_cost(previous_hand: int, hand: int, costs: HandCosts) -> float:
+    if previous_hand == hand:
+        return 0.0
+    return costs.shift_cost + costs.shift_per_fret * abs(hand - previous_hand)
 
 
 def _voice_chord_greedy(pitches_midi: list[int]) -> list[tuple[int, int]] | None:
@@ -198,25 +253,19 @@ def _group_into_steps(notes: list[dict]) -> list[list[dict]]:
     return steps
 
 
-def map_notes_to_positions(notes: list[dict]) -> list[dict]:
-    """Maps note events onto guitar string/fret positions via dynamic
-    programming, per spec 3.5. dp[i][c] = minimum cumulative cost to reach
-    candidate c at step i; backpointers reconstruct the globally optimal
-    path once the full table is built (Viterbi-style), not a greedy
-    nearest-position choice.
-
-    The cost formula in spec 3.5 has no bias toward absolute neck position
-    (it only penalizes relative movement and same-string reuse, and rewards
-    open strings), so distinct regions of the neck can tie exactly on total
-    cost.
-    Each dp value is a (transition_cost, fret_sum) tuple compared
-    lexicographically, so ties are broken in favor of the lowest-fret path
-    among all cost-optimal paths, without changing the cost formula itself.
+def map_notes_to_positions(notes: list[dict], costs: HandCosts = HAND_COSTS) -> list[dict]:
+    """Maps note events onto guitar string/fret positions by following the
+    player's fretting hand, per spec 3.5: a Viterbi-style dynamic program
+    over (voicing, index-finger position) states. Playing notes outside the
+    hand's span and shifting the hand cost (HandCosts), so the tab stays in
+    one region of the neck until the music requires a move, the way
+    guitarists play; open strings are free anywhere. Backpointers
+    reconstruct the globally cheapest path, not a greedy choice.
     """
-    return map_notes_with_steps(notes)[0]
+    return map_notes_with_steps(notes, costs)[0]
 
 
-def map_notes_with_steps(notes: list[dict]) -> tuple[list[dict], list[list[dict]]]:
+def map_notes_with_steps(notes: list[dict], costs: HandCosts = HAND_COSTS) -> tuple[list[dict], list[list[dict]]]:
     """map_notes_to_positions, also returning the groups (tab columns) the
     notes were placed in, including notes later dropped as unplayable. For
     the measurement scripts, so they see exactly the grouping the mapper
@@ -225,11 +274,12 @@ def map_notes_with_steps(notes: list[dict]) -> tuple[list[dict], list[list[dict]
     if not notes:
         return [], []
 
-    # step_candidates[i] is a list of candidate positions for step i; a
-    # monophonic step gets every valid (string, fret) for its pitch (real
-    # DP choice), a chord step gets exactly one pre-voiced combination.
-    # Chords that can't be voiced are reduced first (notes dropped), so
-    # `steps` holds only the notes that actually get placed.
+    # step_candidates[i] lists the candidate position sets for step i: every
+    # valid (string, fret) for a single note, and for a chord every voicing
+    # on distinct strings within a playable span (falling back to the
+    # exhaustive lowest-fret voicing when none fits). Chords that can't be
+    # voiced at all are reduced first (notes dropped), so `steps` holds only
+    # the notes that actually get placed.
     groups: list[list[dict]] = []
     steps: list[list[dict]] = []
     step_candidates: list[list[list[tuple[int, int]]]] = []
@@ -252,45 +302,47 @@ def map_notes_with_steps(notes: list[dict]) -> tuple[list[dict], list[list[dict]
                 continue
             candidates = [[c] for c in singles]
         else:
-            candidates = [voicing]
+            pitches = [pretty_midi.note_name_to_number(n["pitch"]) for n in step_notes]
+            candidates = _chord_voicings(pitches, costs.max_voicing_span) or [voicing]
         steps.append(step_notes)
         step_candidates.append(candidates)
 
     if not step_candidates:
         return [], groups
 
-    dp: list[list[tuple[float, int]]] = [
-        [(0.0, _candidate_fret_sum(c)) for c in step_candidates[0]]
-    ]
-    backptr: list[list[int | None]] = [[None] * len(step_candidates[0])]
+    # dp[c][h]: cheapest cost of reaching candidate c at this step with the
+    # index finger at hand position h. The shift cost depends only on the two
+    # hand positions, so the best predecessor for each h is found once per
+    # step over hand positions, not per candidate pair.
+    hands = list(HAND_POSITIONS)
+    dp = [[_placement_cost(c, h, costs) for h in hands] for c in step_candidates[0]]
+    # Per step (from the second): for each hand index, the predecessor's hand
+    # index, and for each hand index the best previous candidate there.
+    back_hand: list[list[int]] = []
+    back_candidate: list[list[int]] = []
 
     for i in range(1, len(step_candidates)):
-        prev_candidates = step_candidates[i - 1]
-        curr_candidates = step_candidates[i]
-        dp_row: list[tuple[float, int]] = []
-        bp_row: list[int | None] = []
+        best_at_hand = [min(range(len(dp)), key=lambda c, hi=hi: dp[c][hi]) for hi in range(len(hands))]
+        best_value_at_hand = [dp[best_at_hand[hi]][hi] for hi in range(len(hands))]
+        arrive, arrive_from = [], []
+        for hi, h in enumerate(hands):
+            from_hi = min(range(len(hands)),
+                          key=lambda pj: best_value_at_hand[pj] + _shift_cost(hands[pj], h, costs))
+            arrive.append(best_value_at_hand[from_hi] + _shift_cost(hands[from_hi], h, costs))
+            arrive_from.append(from_hi)
+        back_hand.append(arrive_from)
+        back_candidate.append(best_at_hand)
+        dp = [[arrive[hi] + _placement_cost(c, h, costs) for hi, h in enumerate(hands)] for c in step_candidates[i]]
 
-        for curr in curr_candidates:
-            curr_fret_sum = _candidate_fret_sum(curr)
-            best_value = None
-            best_prev_idx = None
-            for prev_idx, prev in enumerate(prev_candidates):
-                prev_cost, prev_fret_sum = dp[i - 1][prev_idx]
-                value = (prev_cost + _transition_cost(prev, curr), prev_fret_sum + curr_fret_sum)
-                if best_value is None or value < best_value:
-                    best_value = value
-                    best_prev_idx = prev_idx
-            dp_row.append(best_value)
-            bp_row.append(best_prev_idx)
-
-        dp.append(dp_row)
-        backptr.append(bp_row)
-
-    last_row = dp[-1]
+    # Backtrack from the cheapest final state.
+    last_c, last_h = min(((c, hi) for c in range(len(dp)) for hi in range(len(hands))),
+                         key=lambda state: dp[state[0]][state[1]])
     chosen_indices: list[int] = [0] * len(step_candidates)
-    chosen_indices[-1] = min(range(len(last_row)), key=lambda i: last_row[i])
+    chosen_indices[-1] = last_c
+    hand_index = last_h
     for i in range(len(step_candidates) - 1, 0, -1):
-        chosen_indices[i - 1] = backptr[i][chosen_indices[i]]
+        hand_index = back_hand[i - 1][hand_index]
+        chosen_indices[i - 1] = back_candidate[i - 1][hand_index]
 
     result_notes: list[dict] = []
     for step_notes, candidates, idx in zip(steps, step_candidates, chosen_indices):
