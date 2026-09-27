@@ -168,6 +168,22 @@ stays the fixed four-value enum.
   progression gain (complete 25/25/0% -> 12/25/0% and 0/25/0%), known-tab
   clip neutral at 0.75x and worse at 0.5x (97% recall, 14/15), and
   detection ~3x slower. Extra notes it adds on real audio are mostly false.
+- Tested and rejected (never merged; branch feature/hand-position): a
+  hand-position fretboard mapper (DP over voicing + index-finger fret,
+  span/stretch/shift costs, open-position bonus, constants in HandCosts,
+  tuned with 2-fold cross-validation by performance on EGSet12). The
+  current mapper's position errors are real (~90% land ~5 frets toward
+  the nut), but the fix didn't hold up. Cross-validated held-out position
+  agreement vs the current mapper: clean 53.2 -> 55.8% (chords 59.4 ->
+  60.2), moderate 48.3 -> 49.7, heavy 45.0 -> 44.7 (chords 50.6 -> 45.1);
+  it shifted hand position ~half as often as players. Rejected because
+  this cost model can't tell an open-position shape from an up-the-neck
+  shape for the same notes: a real open-string bonus fixed open chords
+  (performance 06) but pulled up-neck passages (12) down to the nut, and
+  with the final all-12 constants both showcase passages broke (12: 2/12,
+  06: 8/23 positions right) and clean chords lost even in-sample (59.4 ->
+  56.1). Don't retry by retuning constants; it needs more context than
+  this cost model has.
 - On Windows/Git Bash specifically: `docker compose exec` container
   paths can get mangled by Git Bash's POSIX-path conversion — prefix
   with MSYS_NO_PATHCONV=1.
