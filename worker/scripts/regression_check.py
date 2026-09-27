@@ -39,6 +39,8 @@ from scripts.chord_stages import (  # noqa: E402
     run_stages,
     window_metrics,
 )
+from scripts.egset12_benchmark import BENCHMARK_JSON, print_eval  # noqa: E402
+from scripts.egset12_benchmark import evaluate as evaluate_egset12  # noqa: E402
 from scripts.eval_chords import evaluate_program, evaluate_repeats  # noqa: E402
 
 TESTSET = "/app/data/_testaudio/chord_testset"
@@ -154,8 +156,12 @@ def _solo(config: StageConfig) -> dict:
 
 
 def run_all(config: StageConfig) -> dict:
-    return {"config": config.describe(), "synthetic": _synthetic(config), "firefire": _firefire(config),
-            "solo": _solo(config)}
+    result = {"config": config.describe(), "synthetic": _synthetic(config), "firefire": _firefire(config),
+              "solo": _solo(config)}
+    # Real-guitar benchmark (scripts/egset12_benchmark.py), once built.
+    if os.path.exists(BENCHMARK_JSON):
+        result["egset12"] = evaluate_egset12(config)
+    return result
 
 
 def _solo_diff(base: dict | None, cur: dict) -> str:
@@ -196,6 +202,8 @@ def print_report(cur: dict, base: dict | None) -> None:
               f"{m['columns']} ({d(m['chord_columns_ge3'], r and r['chord_columns_ge3'])}) | "
               f"{m['mean_notes_per_chord_column']} | {m['mapper_drops']} | {m['retrigger_candidates']}")
     print(f"  solo clip: {_solo_diff(base['solo'] if base else None, cur['solo'])}")
+    if "egset12" in cur:
+        print_eval(cur["egset12"], base.get("egset12") if base else None)
 
 
 def _parse_spec(spec: str) -> StageConfig:

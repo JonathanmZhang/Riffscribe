@@ -182,3 +182,15 @@ Developer scripts for measuring where chord notes get lost. They run inside the 
 - `python -m scripts.inspect_chords <file> <start_s> <end_s> [--separate] [--expect "G,B,D"]` shows every note event, the grouping and the fretboard mapping for one window of any recording.
 
 The test set is rendered with [FluidSynth](https://www.fluidsynth.org/) and the **FluidR3_GM** General MIDI soundfont by Frank Wen, released under the **MIT license**. Both are installed from Debian packages (`fluidsynth`, `fluid-soundfont-gm`) when the worker image is built, and neither is committed to this repository.
+
+### Real-guitar benchmark (EGSet12)
+
+`python -m scripts.download_egset12` fetches the audio and annotations, then `python -m scripts.egset12_benchmark build` prepares the benchmark in `data/egset12/` (not committed). `regression_check` includes it once it's built. The benchmark:
+
+- cuts the 12 performances into 36 segments, labelled chords, single-note or fast;
+- names every chord in the annotations;
+- renders two **processed-distortion** versions of each performance with [pedalboard](https://github.com/spotify/pedalboard)'s Distortion plugin, at moderate and heavy drive. These are a stand-in for driven tones, not real amplifier recordings.
+
+It reports **pitch** recall and precision (the right note within 50 ms, on any string) and **position** agreement (the same string and fret, among correctly found notes), broken down by tone and segment type.
+
+EGSet12 is by Hegel Pedroza, Wallace Abreu, Ryan Corey and Iran R. Roman, available at [zenodo.org/records/11406378](https://zenodo.org/records/11406378) under the **CC BY 4.0** license. It was introduced in their DAFx 2024 paper, *"Leveraging real electric guitar tones and effects to improve robustness in guitar tablature transcription modeling"*.

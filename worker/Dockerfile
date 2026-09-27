@@ -25,6 +25,10 @@ RUN python -c "from demucs.pretrained import get_model; get_model('htdemucs_6s')
 RUN apt-get update && apt-get install -y --no-install-recommends fluidsynth fluid-soundfont-gm \
     && rm -rf /var/lib/apt/lists/*
 
+# Evaluation tooling only (scripts/egset12_benchmark.py): Spotify's pedalboard,
+# for the processed-distortion versions of the EGSet12 benchmark.
+RUN pip install --no-cache-dir pedalboard==0.9.16
+
 COPY tasks/ ./tasks/
 COPY scripts/ ./scripts/
 CMD ["celery", "-A", "tasks.celery_app", "worker", "--loglevel=info"]
