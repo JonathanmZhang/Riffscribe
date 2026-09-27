@@ -66,7 +66,7 @@ def inspect(path: str, start: float, end: float, separate: bool = False, seed: i
             expect: str | None = None, config: StageConfig = PIPELINE) -> dict:
     with tempfile.TemporaryDirectory() as workdir:
         events, activations, _info = detect_file(path, workdir, separate=separate, seed=seed)
-    stages = run_stages(events, config)
+    stages = run_stages(events, config, activations)
     events, groups, step_of, mapping = stages["events"], stages["groups"], stages["step_of"], stages["mapping"]
     in_window = [e for e in events if start <= e["start_time"] < end]
 

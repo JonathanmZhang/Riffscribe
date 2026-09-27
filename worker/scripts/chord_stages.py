@@ -55,6 +55,10 @@ class StageConfig:
 
     threshold: float = CONFIDENCE_THRESHOLD
     chord_floor: float = transcribe.CHORD_TONE_CONFIDENCE_FLOOR
+    # Basic Pitch's own note-creation settings (transcribe.notes_from_model_output).
+    bp_onset: float = transcribe.BASIC_PITCH_ONSET_THRESHOLD
+    bp_frame: float = transcribe.BASIC_PITCH_FRAME_THRESHOLD
+    bp_min_note_ms: float = transcribe.BASIC_PITCH_MIN_NOTE_LENGTH_MS
 
     def describe(self) -> str:
         return ", ".join(f"{f.name}={getattr(self, f.name)}" for f in dataclasses.fields(self))
@@ -79,11 +83,14 @@ def config_from_args(args) -> StageConfig:
 
 
 class Activations:
-    """Basic Pitch's per-frame note activations, for asking "did the model
-    hear this pitch at all?" about notes it never emitted as events."""
+    """Basic Pitch's raw model output for one file. Its per-frame note
+    activations answer "did the model hear this pitch at all?" about notes it
+    never emitted, and the full output lets run_stages derive note events for
+    any Basic Pitch note-creation settings without re-running the network."""
 
-    def __init__(self, note_matrix: np.ndarray):
-        self.note = np.asarray(note_matrix)  # (frames, 88)
+    def __init__(self, model_output: dict):
+        self.model_output = model_output
+        self.note = np.asarray(model_output["note"])  # (frames, 88)
         self.times = np.asarray(model_frames_to_time(self.note.shape[0]))
 
     def peak(self, midi: int, start: float, end: float) -> float:
@@ -99,7 +106,8 @@ def _cache_key(input_path: str, separate: bool, seed: int) -> str:
     with open(input_path, "rb") as f:
         for chunk in iter(lambda: f.read(1 << 20), b""):
             digest.update(chunk)
-    digest.update(f"|sep={separate}|seed={seed}|bp={importlib.metadata.version('basic-pitch')}".encode())
+    # "mo": the cache holds Basic Pitch's model output, not finished events.
+    digest.update(f"|mo|sep={separate}|seed={seed}|bp={importlib.metadata.version('basic-pitch')}".encode())
     if separate:
         digest.update(f"|{DEMUCS_MODEL}|shifts={DEMUCS_SHIFTS}|torch={torch.__version__}".encode())
     return digest.hexdigest()[:20]
@@ -110,16 +118,18 @@ def detect_file(input_path: str, workdir: str, separate: bool = False, seed: int
     """Decodes the input the way ingest_audio does (ffmpeg extraction for
     video/m4a), optionally separates the guitar the way separate_guitar does
     (seeded, since Demucs' shifts are random), normalizes to the 22.05kHz
-    mono WAV Basic Pitch is fed, and returns (every note event, activations,
-    info). Cached per file + settings."""
+    mono WAV Basic Pitch is fed, and returns (every note event at the
+    pipeline's Basic Pitch settings, activations, info). The model output is
+    cached per file + separation settings; pass the activations to
+    run_stages to get events for other Basic Pitch settings."""
     cache_path = None
     if use_cache:
         os.makedirs(CACHE_DIR, exist_ok=True)
         cache_path = os.path.join(CACHE_DIR, _cache_key(input_path, separate, seed) + ".pkl")
         if os.path.exists(cache_path):
             with open(cache_path, "rb") as f:
-                events, note_matrix, info = pickle.load(f)
-            return events, Activations(note_matrix), {**info, "cached": True}
+                model_output, info = pickle.load(f)
+            return transcribe.notes_from_model_output(model_output), Activations(model_output), {**info, "cached": True}
 
     source = ensure_decodable_audio(input_path, workdir)
     info = {"separated": separate, "separation_seconds": None, "seed": seed}
@@ -134,12 +144,12 @@ def detect_file(input_path: str, workdir: str, separate: bool = False, seed: int
         sf.write(source, stem.T, sample_rate, subtype="PCM_16")
     normalized = normalize_to_wav(source, os.path.join(workdir, "normalized.wav"))
     events, model_output = detect_note_events(normalized)
-    note_matrix = np.asarray(model_output["note"], dtype=np.float32)
+    model_output = {k: np.asarray(v, dtype=np.float32) for k, v in model_output.items()}
 
     if cache_path:
         with open(cache_path, "wb") as f:
-            pickle.dump((events, note_matrix, info), f)
-    return events, Activations(note_matrix), {**info, "cached": False}
+            pickle.dump((model_output, info), f)
+    return events, Activations(model_output), {**info, "cached": False}
 
 
 # ------------------------------------------- stages 2-4: select, group, map
@@ -149,12 +159,21 @@ def note_key(note: dict) -> tuple:
     return (note["start_time"], note["pitch"])
 
 
-def run_stages(events: list[dict], config: StageConfig = PIPELINE) -> dict:
+def run_stages(events: list[dict], config: StageConfig = PIPELINE, activations: "Activations | None" = None) -> dict:
     """Runs the pipeline's post-detection stages on raw events: note
     selection (transcribe.select_notes), then grouping and fretboard
     mapping (fretboard.map_notes_with_steps). Returns the selected events
     (with "kept" flags), the kept notes, the groups the mapper used, each
-    kept note's group index, positions and drop reasons."""
+    kept note's group index, positions and drop reasons.
+
+    With activations (the cached model output), the events are first
+    re-derived with the config's Basic Pitch settings (bp_*); otherwise the
+    given events are used as they are."""
+    if activations is not None:
+        events = transcribe.notes_from_model_output(
+            activations.model_output, onset_threshold=config.bp_onset, frame_threshold=config.bp_frame,
+            min_note_length_ms=config.bp_min_note_ms,
+        )
     selected = sorted(transcribe.select_notes(events, threshold=config.threshold, chord_floor=config.chord_floor),
                       key=lambda e: (e["start_time"], e["midi"]))
     kept = [e for e in selected if e["kept"]]

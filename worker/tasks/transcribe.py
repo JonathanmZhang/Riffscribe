@@ -6,7 +6,9 @@ import librosa
 import numpy as np
 import pretty_midi
 from basic_pitch import ICASSP_2022_MODEL_PATH
-from basic_pitch.inference import predict
+from basic_pitch.constants import AUDIO_SAMPLE_RATE, FFT_HOP
+from basic_pitch.inference import run_inference
+from basic_pitch.note_creation import model_output_to_notes
 
 from tasks.celery_app import app
 from tasks.fretboard import CHORD_ONSET_TOLERANCE_SECONDS
@@ -18,17 +20,37 @@ CONFIDENCE_THRESHOLD = float(os.environ.get("BASIC_PITCH_CONFIDENCE_THRESHOLD", 
 # Lower confidence bar for notes that start with a confident note (chord
 # tones); see select_notes. Values >= CONFIDENCE_THRESHOLD disable it.
 CHORD_TONE_CONFIDENCE_FLOOR = float(os.environ.get("CHORD_TONE_CONFIDENCE_FLOOR", "0.45"))
+# Basic Pitch's own note-creation settings (predict()'s defaults).
+BASIC_PITCH_ONSET_THRESHOLD = float(os.environ.get("BASIC_PITCH_ONSET_THRESHOLD", "0.5"))
+BASIC_PITCH_FRAME_THRESHOLD = float(os.environ.get("BASIC_PITCH_FRAME_THRESHOLD", "0.3"))
+BASIC_PITCH_MIN_NOTE_LENGTH_MS = float(os.environ.get("BASIC_PITCH_MIN_NOTE_LENGTH_MS", "127.7"))
 
 
-def detect_note_events(audio_path: str) -> tuple[list[dict], dict]:
-    """Runs Basic Pitch on audio_path and returns (every note event, before
-    any confidence filter, and the raw model output). Each event has pitch,
-    midi, start_time, end_time and amplitude. Pure: used by extract_notes and
-    by the chord inspection/evaluation scripts, which need the events the
-    filter drops and the model's per-frame activations.
+def notes_from_model_output(
+    model_output: dict,
+    onset_threshold: float = BASIC_PITCH_ONSET_THRESHOLD,
+    frame_threshold: float = BASIC_PITCH_FRAME_THRESHOLD,
+    min_note_length_ms: float = BASIC_PITCH_MIN_NOTE_LENGTH_MS,
+) -> list[dict]:
+    """Basic Pitch's note creation step (what predict() does after running
+    the network), with its three settings exposed. Pure and cheap, so the
+    measurement scripts can sweep settings on a cached model output. Each
+    event has pitch, midi, start_time, end_time and amplitude.
     """
-    model_output, _, note_events = predict(audio_path, ICASSP_2022_MODEL_PATH)
-    events = [
+    min_note_frames = int(np.round(min_note_length_ms / 1000 * (AUDIO_SAMPLE_RATE / FFT_HOP)))
+    _, note_events = model_output_to_notes(
+        model_output,
+        onset_thresh=onset_threshold,
+        frame_thresh=frame_threshold,
+        min_note_len=min_note_frames,
+        # Same as predict()'s defaults for the settings not exposed here.
+        min_freq=None,
+        max_freq=None,
+        multiple_pitch_bends=False,
+        melodia_trick=True,
+        midi_tempo=120,
+    )
+    return [
         {
             "pitch": pretty_midi.note_number_to_name(pitch_midi),
             "midi": int(pitch_midi),
@@ -38,7 +60,16 @@ def detect_note_events(audio_path: str) -> tuple[list[dict], dict]:
         }
         for start_time, end_time, pitch_midi, amplitude, _pitch_bends in note_events
     ]
-    return events, model_output
+
+
+def detect_note_events(audio_path: str) -> tuple[list[dict], dict]:
+    """Runs Basic Pitch on audio_path and returns (every note event, before
+    any confidence filter, and the raw model output). Pure: used by
+    extract_notes and by the chord inspection/evaluation scripts, which need
+    the events the filter drops and the model's per-frame activations.
+    """
+    model_output = run_inference(audio_path, ICASSP_2022_MODEL_PATH)
+    return notes_from_model_output(model_output), model_output
 
 
 def select_notes(

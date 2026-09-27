@@ -92,8 +92,8 @@ def _firefire(config: StageConfig) -> dict:
     out = {}
     for separate in (False, True):
         with tempfile.TemporaryDirectory() as workdir:
-            events, _, _ = detect_file(FIREFIRE, workdir, separate=separate, seed=0)
-        stages = run_stages(events, config)
+            events, activations, _ = detect_file(FIREFIRE, workdir, separate=separate, seed=0)
+        stages = run_stages(events, config, activations)
         for start, end in FIREFIRE_WINDOWS:
             out[f"{start:g}-{end:g}{' sep' if separate else ''}"] = window_metrics(stages, start, end)
     return out
@@ -120,8 +120,8 @@ def _fit_solo_truth(events: list[dict]) -> tuple[float, float]:
 
 def _solo(config: StageConfig) -> dict:
     with tempfile.TemporaryDirectory() as workdir:
-        events, _, _ = detect_file(SOLO_CLIP, workdir)
-    stages = run_stages(events, config)
+        events, activations, _ = detect_file(SOLO_CLIP, workdir)
+    stages = run_stages(events, config, activations)
     positions = stages["mapping"]["positions"]
     notes = sorted((round(k[0], 3), k[1], *v) for k, v in positions.items())
 

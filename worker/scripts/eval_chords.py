@@ -66,7 +66,7 @@ def evaluate_program(truth: dict, wav_path: str, separate: bool = False, seed: i
     with tempfile.TemporaryDirectory() as workdir:
         events, activations, audio = detect_file(wav_path, workdir, separate=separate, seed=seed)
 
-    stages = run_stages(events, config)
+    stages = run_stages(events, config, activations)
     kept, mapping = stages["kept"], stages["mapping"]
     chords = truth["chords"]
     windows = _windows(chords)
@@ -147,8 +147,8 @@ def evaluate_repeats(truth: dict, wav_path: str, config: StageConfig = PIPELINE)
     counts when a mapped note of the same pitch starts within REPEAT_MATCH_S
     of it; mapped notes of a pattern's pitches that match nothing are extras."""
     with tempfile.TemporaryDirectory() as workdir:
-        events, _, _ = detect_file(wav_path, workdir)
-    stages = run_stages(events, config)
+        events, activations, _ = detect_file(wav_path, workdir)
+    stages = run_stages(events, config, activations)
     mapped = sorted((k[0], pretty_midi.note_name_to_number(k[1])) for k in stages["mapping"]["positions"])
     used: set[int] = set()
     patterns: dict[str, dict] = {}
