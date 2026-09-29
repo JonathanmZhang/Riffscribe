@@ -111,3 +111,101 @@ $RUN stratotab-worker /bakeoff/score.py
 ```
 
 Outputs go to `data/_bakeoff/` (gitignored).
+
+## Full MT3 benchmark (2026-09-29)
+
+Scripts: `run_mt3_files.py` runs MT3 (bakeoff-mt3 image) and keeps every
+note with its program. `prep_firefire.py` (worker image) produces the
+firefire mix and Demucs stem and times Basic Pitch and separation.
+`bench_mt3.py` (worker image) does the scoring and writes
+`data/_bakeoff/bench_mt3.json`.
+
+MT3 mode: all instruments, drums excluded, same-pitch notes within 50ms
+merged across programs. MT3's **tab** goes through the pipeline's own
+`run_stages` (select_notes, grouping, fretboard mapper) with amplitude 1.0,
+because MT3 gives no per-note confidence. Basic Pitch's tab numbers are
+checked in the script to reproduce `egset12_benchmark.evaluate` exactly.
+
+### EGSet12, all 36 segments (1567 notes per tone): recall / precision [position agreement]
+
+| tone | type | BP raw | MT3 raw | BP tab (today) | MT3 tab |
+|---|---|---|---|---|---|
+| clean | all | 76.6 / 79.2 | 75.7 / 74.2 | **71.9 / 85.2** [57.0] | 74.5 / 77.4 [48.5] |
+| clean | chords (950) | 67.6 / 77.2 | 70.8 / 72.4 | 61.9 / 83.5 [56.1] | 69.0 / 76.4 [49.7] |
+| clean | single-note (534) | 92.5 / 80.1 | 83.2 / 76.7 | 89.5 / 86.1 [58.0] | 83.0 / 79.0 [49.7] |
+| clean | fast (83) | 77.1 / 97.0 | 83.1 / 77.5 | 73.5 / 96.8 [57.4] | 81.9 / 77.3 [29.4] |
+| moderate | all | 66.9 / 72.9 | 71.8 / 60.1 | 55.8 / 80.7 [54.5] | 68.2 / 64.5 [52.6] |
+| moderate | chords | 54.1 / 69.0 | 64.6 / 58.8 | 39.3 / 78.4 [54.2] | 60.3 / 61.6 [54.1] |
+| moderate | single-note | 88.4 / 74.9 | 84.6 / 69.0 | 82.8 / 80.8 [54.3] | 82.8 / 70.3 [53.8] |
+| moderate | fast | 75.9 / 96.9 | 71.1 / 34.1 | 71.1 / 98.3 [57.6] | 65.1 / 55.1 [25.9] |
+| heavy | all | 51.9 / 61.4 | 62.9 / 48.2 | 38.5 / 71.7 [54.1] | **60.6 / 55.1** [44.9] |
+| heavy | chords | 34.5 / 51.9 | 52.0 / 43.6 | 17.1 / 60.5 [53.7] | 48.3 / 51.8 [43.6] |
+| heavy | single-note | 80.5 / 67.7 | 78.8 / 52.2 | 74.7 / 75.4 [54.4] | 78.8 / 57.3 [49.4] |
+| heavy | fast | 67.5 / 94.9 | 85.5 / 67.0 | 51.8 / 95.6 [53.5] | 83.1 / 68.3 [26.1] |
+
+Tab F1: clean BP 78.0 vs MT3 75.9, moderate 66.0 vs 66.3, heavy 50.1 vs 57.7.
+The moderate and heavy tones are processed distortion, not real amps. The
+three feasibility segments overstated MT3: clean chords are 70.8% raw recall
+here, against 91.5% on 02-2 alone. MT3's position agreement is 2-9 points
+lower, and on fast passages it's about half of Basic Pitch's. That wasn't
+investigated further.
+
+### Octave errors
+
+MT3's false notes that are exactly one octave off a true note, onset within
+50ms: clean 181/412 (44%), moderate 339/748 (45%), heavy 434/1059 (41%).
+Counting two-octave errors too raises these to about 50-54%. So one-octave
+errors are the largest single category, but not a majority. Most are "ghosts",
+where the true note was also found: 56% clean, 73% moderate, 82% heavy. The
+rest are substitutions, and 89% of the clean ones are upward. Candidate fixes, clean raw recall / precision:
+
+| fix | clean raw | clean tab | heavy tab |
+|---|---|---|---|
+| none | 75.7 / 74.2 | 74.5 / 77.4 | 60.6 / 55.1 |
+| drop a note with the same note an octave below within 50ms | 69.1 / 78.6 | 68.9 / 81.3 | 49.7 / 66.5 |
+| raise notes below E2 an octave | 75.7 / 74.6 | 74.5 / 77.4 | 60.8 / 54.7 |
+
+Dropping upper octaves costs more recall than it gains in precision, because
+9.8% of true notes (153/1567) are real octave doublings. Substitutions can't
+be fixed by dropping notes. No simple fix is worth it.
+
+### Firefire (full mix, no ground truth), 3 windows
+
+MT3's emitted notes by GM family, `drums` flagged by MT3 itself:
+
+| window | full mix | Demucs stem |
+|---|---|---|
+| 28-31 | guitar 77, drums 21, piano 2, synth lead 2 | guitar 54, piano 3, strings 1 |
+| 39.5-42.5 | drums 37, piano 13, strings 10, guitar 10, synth lead 10 | organ 44, guitar 34, strings 18 |
+| 60-63 | piano 47, drums 36, guitar 12, choir 11, synth lead 8, bass 1 | piano 63, organ 30, guitar 10, strings 5 |
+
+- **Drums:** 94 notes across the windows on the full mix. All are removed,
+  because MT3 flags them as drums.
+- **Bass:** 1 note. MT3 barely reports bass on this mix.
+- **Vocals:** MT3 has no voice class, and its labels are unreliable (the
+  stem, which should be guitar, comes out as mostly piano and organ).
+  Vocals can't be counted directly. The families that appear only in the
+  full mix, synth lead and choir, are the likely vocal and other-instrument
+  notes. There are 31 of them, and 22 reach the tab: 15% of the full-mix
+  tab's 144 notes.
+
+Tab through the pipeline mapper, MT3 vs Basic Pitch (full mix / stem): tab
+notes 55/49, 34/50, 55/68 vs 16/20, 12/28, 22/18. MT3 produces 2-4x the
+notes and 4.8-5.3-note chord columns, against Basic Pitch's ~3. But on the
+stem the mapper drops 32 MT3 notes per window in 2 of 3 windows (0 for Basic
+Pitch), which means unplayable note sets. Without ground truth, it's unknown
+how much of the extra density is real.
+
+### Processing time per song (measured on firefire, 102.5s, steady state)
+
+| route | seconds | per minute of audio |
+|---|---|---|
+| Basic Pitch, full mix | 5.2 | 3s |
+| Basic Pitch + Isolate guitar (Demucs 88.5s warm, 107s cold) | ~94 | ~55s |
+| MT3, full mix | 262 | 2.6 min |
+| MT3 + Isolate guitar | 88.5 + 356 = ~445 | ~4.3 min |
+
+MT3's speed depends on note density: 0.7-3.8 s/s per EGSet12 file, with a
+mean of 1.8-2.0 s/s per tone. At the stem's 3.5 s/s, MT3 alone would hit the
+worker's 900s soft limit at about 4.3 minutes of audio. Peak RAM is 2.2-2.5
+GB, against about 1.15 GB for Basic Pitch.
