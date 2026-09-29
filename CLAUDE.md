@@ -184,6 +184,32 @@ stays the fixed four-value enum.
   06: 8/23 positions right) and clean chords lost even in-sample (59.4 ->
   56.1). Don't retry by retuning constants; it needs more context than
   this cost model has.
+- Tested and rejected (never merged; branch experiment/model-bakeoff,
+  experiments/model_bakeoff/README.md): replacing Basic Pitch with a
+  stronger transcription model. YourMT3+ (47% recall vs Basic Pitch's
+  62% tab, ~17x slower) and TabCNN-GuitarProFX (54% precision, 33% chord
+  recall) lost at feasibility; FretNet has no downloadable weights. MT3
+  went to a full run (all instruments, drums dropped, same-pitch notes
+  within 50ms merged across programs - its instrument labels are
+  useless, 78% of a Telecaster came
+  out as piano/other - then through our run_stages/mapper). EGSet12 tab
+  recall/precision [position] vs Basic Pitch: clean 74.5/77.4 [48.5] vs
+  71.9/85.2 [57.0] (F1 75.9 vs 78.0), moderate F1 66.3 vs 66.0, heavy
+  60.6/55.1 vs 38.5/71.7 (F1 57.7 vs 50.1, but that's processed
+  distortion, not a real amp). Fast-passage position agreement is ~half
+  Basic Pitch's. One-octave errors are 41-45% of its false notes and
+  neither simple fix helps (dropping upper octaves costs more recall than
+  it gains precision; ~10% of true notes are real octave doublings). On
+  the firefire stem it makes denser chords but the mapper drops 32
+  notes/window as unplayable. Per 102s song: Basic Pitch 5s, +Demucs ~94s,
+  MT3 262s, MT3+Demucs ~445s (MT3 is 0.7-3.8 s/s, scaling with note
+  density; ~2.3 GB RAM). It also needs its own container (Python 3.12,
+  JAX 0.11, TF 2.21, numpy 2.5). The 3-segment feasibility check was
+  misleading (88.5% recall; clean chords 91.5% on 02-2 vs 70.8% raw over
+  all 36 segments) - never decide on a few segments. Revisit only with
+  ground truth for real distorted / full-mix recordings. Adding YourMT3+
+  or amt-tools to the worker unpinned pulls protobuf 7 and breaks TF
+  2.15 - pin protobuf<5.
 - On Windows/Git Bash specifically: `docker compose exec` container
   paths can get mangled by Git Bash's POSIX-path conversion — prefix
   with MSYS_NO_PATHCONV=1.
