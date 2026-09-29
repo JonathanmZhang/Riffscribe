@@ -197,3 +197,41 @@ The test set is rendered with [FluidSynth](https://www.fluidsynth.org/) and the 
 It reports **pitch** recall and precision (the right note within 50 ms, on any string) and **position** agreement (the same string and fret, among correctly found notes), broken down by tone and segment type.
 
 EGSet12 is by Hegel Pedroza, Wallace Abreu, Ryan Corey and Iran R. Roman, available at [zenodo.org/records/11406378](https://zenodo.org/records/11406378) under the **CC BY 4.0** license. It was introduced in their DAFx 2024 paper, *"Leveraging real electric guitar tones and effects to improve robustness in guitar tablature transcription modeling"*.
+
+## License
+
+Riffscribe's own code is released under the [MIT license](LICENSE). Third-party components keep their own licenses. None of them is vendored into this repository: they're installed from PyPI, npm, Debian or Docker Hub when the images are built, or downloaded at build time.
+
+**Pipeline (used on every job)**
+
+| Component | Used for | License |
+|---|---|---|
+| [Basic Pitch](https://github.com/spotify/basic-pitch) (code and model) | note detection | Apache-2.0 |
+| TensorFlow | runs Basic Pitch | Apache-2.0 |
+| librosa, resampy | audio loading and resampling | ISC |
+| soundfile | WAV I/O | BSD-3-Clause |
+| pretty_midi | MIDI note names | MIT |
+| NumPy, scikit-learn | numerics (librosa/Basic Pitch dependencies) | BSD-3-Clause |
+| [Demucs](https://github.com/facebookresearch/demucs) 4.0.1 and its `htdemucs_6s` weights | "Isolate guitar" separation | MIT |
+| PyTorch, torchaudio | runs Demucs | BSD-3-Clause |
+| yt-dlp | link ingestion | Unlicense |
+| FFmpeg (Debian package) | decoding video/compressed audio, run as a separate program | GPL (Debian builds with `--enable-gpl`) |
+| Celery | task queue | BSD-3-Clause |
+| redis-py | Redis client | MIT |
+| Redis server (`redis:7-alpine` image, currently 7.4) | queue broker and job state, run unmodified as a separate service | RSALv2 / SSPLv1 (source-available; Redis 7.2 and earlier were BSD-3-Clause) |
+| FastAPI, Pydantic | API | MIT |
+| Uvicorn | ASGI server | BSD-3-Clause |
+| python-multipart | uploads | Apache-2.0 |
+| Next.js, React | frontend | MIT |
+| Tailwind CSS, TypeScript | frontend build | MIT / Apache-2.0 |
+
+**Evaluation tooling only (not used by the pipeline)**
+
+| Component | Used for | License |
+|---|---|---|
+| FluidSynth (Debian package) | rendering the synthetic chord test set | LGPL-2.1 |
+| FluidR3_GM soundfont | same | MIT |
+| [pedalboard](https://github.com/spotify/pedalboard) | EGSet12's processed-distortion tones (installed in the worker image) | GPL-3.0 |
+| [EGSet12](https://zenodo.org/records/11406378) | real-guitar benchmark audio and annotations | CC BY 4.0 |
+
+The experiment branches (`experiment/*`) tried further third-party models. Each branch's `experiments/*/README.md` lists their licenses.
