@@ -62,7 +62,22 @@ Validation errors → 422.
 GET /jobs/{job_id} — Returns 200:
 {job_id, status: "queued"|"processing"|"done"|"failed", error, result}.
 result only populated when status is "done". Unknown job_id → 404.
-Status is a FIXED enum — never a fifth value.
+Status is a FIXED enum — never a fifth value. Also returns the job's
+notation overrides, tempo_factor (0.5 | 1 | 2, default 1) and
+bar_offset_beats (0-3, default 0).
+
+PATCH /jobs/{job_id} — JSON {tempo_factor?, bar_offset_beats?}; fields
+left out keep their value. Finished jobs only (409 otherwise); invalid
+values → 422. Stores the overrides and recomputes result.bars from the
+stored beats (tasks/rhythm.py); nothing is re-transcribed. Returns the
+same body as GET /jobs/{job_id}.
+
+GET /jobs/{job_id}/musicxml — the finished tab as MusicXML 4.0
+(application/vnd.recordare.musicxml+xml, attachment
+riffscribe-<id>.musicxml): one guitar part, notation + TAB staves, 4/4,
+quantized starts and lengths, BTC chord symbols. Built on each request by
+the backend (tasks/musicxml.py, shared from the worker) with the job's
+current overrides. 404 if the job is unknown or not done.
 
 ### 3.4 Celery Task Chain
 
@@ -124,7 +139,8 @@ combination (hand-shape realism is a stretch goal).
     {"start": 1.76, "end": 2.87, "name": "Am7"}
   ],
   "beats": [0.012, 0.512, 1.013],
-  "downbeats": [0.012]
+  "downbeats": [0.012],
+  "bars": [0.012]
 }
 
 Time is stored in raw seconds, not beats/measures, for v1. "chords" are
@@ -135,7 +151,11 @@ for jobs finished before chord names existed. TabViewer prints a name
 above the first column of each chord change. "beats" and "downbeats" are
 beat and bar-start times in seconds (downbeats a subset of beats); both
 are empty for jobs finished before beat tracking existed or when it
-failed. Notes are not quantized to them yet.
+failed. "bars" are the bar start times as notated: 4/4, the beats (kept
+at one metrical level, then halved/doubled by the job's tempo_factor) in
+4s, phased where most downbeats fall and moved by bar_offset_beats; empty
+without beats. The JSON's notes stay in raw seconds; quantization to 16ths
+happens only in the MusicXML export.
 
 ### 3.7 Known Edge Cases
 

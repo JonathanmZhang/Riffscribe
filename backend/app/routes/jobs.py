@@ -6,9 +6,12 @@ from uuid import uuid4
 import redis.asyncio as redis
 from celery import Celery, chain, signature
 from fastapi import APIRouter, HTTPException, Request, status
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 
-from app.schemas.job import JobCreateResponse, JobRecord, JobStatus, JobStatusResponse
+from app.schemas.job import JobCreateResponse, JobOverrides, JobRecord, JobStatus, JobStatusResponse
+# Pure notation code shared with the worker (worker/tasks/rhythm.py and
+# musicxml.py, copied in by backend/Dockerfile from the "worker" context).
+from tasks import musicxml, rhythm
 
 router = APIRouter(prefix="/jobs", tags=["jobs"])
 
@@ -120,15 +123,10 @@ async def create_job(request: Request) -> JobCreateResponse:
     return JobCreateResponse(job_id=job_id, status=JobStatus.queued)
 
 
-@router.get("/{job_id}", response_model=JobStatusResponse)
-async def get_job(job_id: str) -> JobStatusResponse:
-    raw = await redis_client.get(_job_key(job_id))
-    if raw is None:
-        raise HTTPException(status_code=404, detail="Job not found")
-
+def _status_response(raw: str) -> JobStatusResponse:
     job = JobRecord.model_validate_json(raw)
-    # stage and stem_audio_path are written by the worker and aren't part of
-    # JobRecord, so read them from the raw stored dict (as get_job_audio does).
+    # stage, stem_audio_path and the overrides aren't part of JobRecord, so
+    # read them from the raw stored dict (as get_job_audio does).
     job_data = json.loads(raw)
     return JobStatusResponse(
         job_id=job.job_id,
@@ -138,6 +136,61 @@ async def get_job(job_id: str) -> JobStatusResponse:
         isolate_guitar=job.isolate_guitar,
         stage=job_data.get("stage"),
         stem_available=_existing_file(job_data.get("stem_audio_path")) is not None,
+        tempo_factor=job_data.get("tempo_factor", 1.0),
+        bar_offset_beats=job_data.get("bar_offset_beats", 0),
+    )
+
+
+@router.get("/{job_id}", response_model=JobStatusResponse)
+async def get_job(job_id: str) -> JobStatusResponse:
+    raw = await redis_client.get(_job_key(job_id))
+    if raw is None:
+        raise HTTPException(status_code=404, detail="Job not found")
+    return _status_response(raw)
+
+
+@router.patch("/{job_id}", response_model=JobStatusResponse)
+async def update_job_overrides(job_id: str, overrides: JobOverrides) -> JobStatusResponse:
+    """Sets the job's notation overrides and recomputes its bar lines from
+    the stored beats. Nothing is re-transcribed; the MusicXML export reads
+    the overrides on every request. Only for finished jobs, so this never
+    races the worker's writes to the same record."""
+    raw = await redis_client.get(_job_key(job_id))
+    if raw is None:
+        raise HTTPException(status_code=404, detail="Job not found")
+    job_data = json.loads(raw)
+    if job_data.get("status") != JobStatus.done.value or not job_data.get("result"):
+        raise HTTPException(status_code=409, detail="Overrides can only be set on a finished job")
+
+    for field in ("tempo_factor", "bar_offset_beats"):
+        value = getattr(overrides, field)
+        if value is not None:
+            job_data[field] = value
+    result = job_data["result"]
+    result["bars"] = rhythm.bar_starts(result.get("beats") or [], result.get("downbeats") or [],
+                                       job_data.get("tempo_factor", 1.0), job_data.get("bar_offset_beats", 0))
+    raw = json.dumps(job_data)
+    await redis_client.set(_job_key(job_id), raw)
+    return _status_response(raw)
+
+
+@router.get("/{job_id}/musicxml")
+async def get_job_musicxml(job_id: str) -> Response:
+    """The finished tab as MusicXML (notation + TAB staff, 4/4, quantized,
+    chord symbols), built on request with the job's current overrides."""
+    raw = await redis_client.get(_job_key(job_id))
+    if raw is None:
+        raise HTTPException(status_code=404, detail="Job not found")
+    job_data = json.loads(raw)
+    if job_data.get("status") != JobStatus.done.value or not job_data.get("result"):
+        raise HTTPException(status_code=404, detail="MusicXML not available for this job yet")
+
+    content = musicxml.to_musicxml(job_data["result"], job_data.get("tempo_factor", 1.0),
+                                   job_data.get("bar_offset_beats", 0))
+    return Response(
+        content=content,
+        media_type="application/vnd.recordare.musicxml+xml",
+        headers={"Content-Disposition": f'attachment; filename="riffscribe-{job_id[:8]}.musicxml"'},
     )
 
 

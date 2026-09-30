@@ -1,0 +1,4 @@
+# Downloaded by validate.py (W3C MusicXML 4.0 schema).
+xsd/
+# Local exports for checking by eye; firefire isn't ours to redistribute.
+out/

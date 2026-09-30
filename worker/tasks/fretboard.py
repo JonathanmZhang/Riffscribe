@@ -4,6 +4,7 @@ from itertools import combinations
 import pretty_midi
 
 from tasks.celery_app import app
+from tasks.rhythm import bar_starts
 from tasks.storage import get_job, update_job
 
 logger = logging.getLogger(__name__)
@@ -340,6 +341,10 @@ def map_fretboard(job_id: str) -> str:
             # beat tracking failed.
             "beats": job.get("beats") or [],
             "downbeats": job.get("downbeats") or [],
+            # Bar lines as notated (4/4, tasks/rhythm.py); PATCH /jobs/{id}
+            # recomputes them when the job's overrides change.
+            "bars": bar_starts(job.get("beats") or [], job.get("downbeats") or [],
+                               job.get("tempo_factor", 1.0), job.get("bar_offset_beats", 0)),
         }
 
         # stage only describes in-progress work, so it's cleared once done. On

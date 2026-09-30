@@ -234,6 +234,72 @@ treat them loosely.
   half ×17, 2.5 and 4.5 quarters ×3 each). Adding the dotted half would
   cover the largest group.
 
+## Notation: lengths per step, 4/4 bars, one metrical level (`notation.py`)
+
+This measures the pipeline's own notation code (`tasks/rhythm.py`, used by
+the MusicXML export; see `experiments/musicxml/README.md`) against the
+Guitar Pro rhythms. Lengths are scored as notated: snapped to a note value,
+then cut at the next step, since the notation is one voice. That's why they
+score higher than in the section above.
+
+**Length rule.** "per_step" uses Basic Pitch's length for chords (2+ notes
+on one 16th) and fast single notes (a neighbour within a 16th at 110 bpm),
+and the gap to the next step for other single notes. The rule decides per
+step from the notes; EGSet12's segment labels are used only for reporting.
+% of notes with the start / length right:
+
+| beats | rule | clean | moderate | heavy |
+|---|---|---|---|---|
+| true | **per_step** | 98.9 / **73.1** | 99.2 / **67.6** | 99.7 / 66.6 |
+| true | sounding | 98.9 / 66.3 | 99.2 / 59.3 | 99.7 / 55.6 |
+| true | next_onset | 98.9 / 69.8 | 99.2 / 64.6 | 99.7 / **67.9** |
+| beat_this (one level) | **per_step** | 96.7 / **72.5** | 97.3 / **67.0** | 97.7 / 68.0 |
+| beat_this (one level) | sounding | 96.7 / 70.7 | 97.3 / 62.2 | 97.7 / 63.4 |
+| beat_this (one level) | next_onset | 96.7 / 69.2 | 97.3 / 64.0 | 97.7 / **68.4** |
+
+- **per_step is kept.** It beats both single rules on clean and moderate,
+  by 1.8-3.3 points over the better of the two, and overall. On heavy it's
+  tied with next_onset: 1.3 points behind with true beats and 0.4 behind
+  with beat_this's, on 604 notes.
+- **By segment,** it's best on single-note lines (73-77%) and weakest on
+  fast passages (53-70%, only 43-61 notes).
+- **Grouping.** Notes on the same 16th form a chord ("slot"). The
+  alternative, the tab's 150ms groups placed at their first note's 16th
+  ("strum"), puts 3 points fewer starts right: it merges fast runs into
+  chords (fast-passage starts 67-83%).
+
+**One metrical level.** On firefire, beat_this tracks the intro at half
+tempo (42 gaps of 0.64s in a song of 0.32s beats), so 4 grid beats made
+bars of 2.3s there and 1.3s later. `regular_beats` fixes this in the
+notation grid only; the stored beats are left raw. It drops a beat closer
+than 0.6 spacings to the last one kept, and fills gaps of ~2 or ~3
+spacings. The spacing is the median gap of the whole song. On EGSet12 it
+helps nearly everywhere:
+
+| | clean | moderate | heavy |
+|---|---|---|---|
+| beat F: raw → one level | 70.1 → 72.4% | 68.7 → 68.7% | 64.6 → 63.2% |
+| starts right (per_step) | 95.9 → 96.7% | 95.3 → 97.3% | 97.7 → 97.7% |
+| lengths right (per_step) | 70.1 → 72.5% | 62.1 → 67.0% | 66.7 → 68.0% |
+
+**Bars** (downbeat F ±70ms, mean of 12):
+
+| | clean | moderate | heavy |
+|---|---|---|---|
+| beat_this's own downbeats (irregular) | **53.9%** | **55.1%** | **52.6%** |
+| 4/4, phase from its downbeats, raw beats | 38.2 | 42.9 | 45.2 |
+| 4/4, phase from its downbeats, one level (**default**) | 50.4 | 49.0 | 49.5 |
+| + best `bar_offset_beats` | 61.4 | 55.9 | 53.7 |
+| + best `tempo_factor` and `bar_offset_beats` | 68.2 | 62.6 | 60.7 |
+
+- **The default 4/4 bars are 3-6 points below beat_this's own
+  downbeats.** Those downbeats aren't usable as notation, though: they're
+  irregular (often 2 beats per bar), and MusicXML needs regular 4/4 bars.
+- **The overrides can do much better.** The right `tempo_factor` and
+  `bar_offset_beats` for each performance reach 61-68%. Most of the gain
+  is fixing half tempo (`tempo_factor` 2 on 02, 07, 09, 11 and 12, clean)
+  and the phase (`bar_offset_beats` 2 on 01).
+
 ## Reproduce
 
 ```sh
@@ -244,4 +310,5 @@ docker run --rm $M --entrypoint python stratotab-worker /rhythm/track.py
 docker run --rm $M --entrypoint python stratotab-worker -m scripts.rhythm_benchmark eval
 docker run --rm $M --entrypoint python stratotab-worker /rhythm/bars.py      # BTC + notes cached in data/_rhythm/_evidence
 docker run --rm $M --entrypoint python stratotab-worker /rhythm/quantize.py
+docker run --rm $M --entrypoint python stratotab-worker /rhythm/notation.py
 ```

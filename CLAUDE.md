@@ -18,6 +18,12 @@ condensed, enforceable rules Claude Code should follow every session.
 - POST /jobs — accepts file upload OR {"url": "..."} JSON, returns 202
   with {job_id, status: "queued"}
 - GET /jobs/{job_id} — returns {job_id, status, error, result}
+- PATCH /jobs/{job_id} — {tempo_factor?: 0.5|1|2, bar_offset_beats?:
+  0-3}, finished jobs only (409 otherwise); recomputes result.bars, never
+  re-transcribes. GET /jobs/{id} also returns both overrides.
+- GET /jobs/{job_id}/musicxml — MusicXML 4.0 (notation + TAB, 4/4,
+  quantized, chord symbols), built per request by the backend with the
+  job's overrides. 404 unless done.
 - GET /jobs/{job_id}/audio — returns FileResponse over the job's stored
   audio (normalized_audio_path), media_type audio/wav. 404 if the job or
   file doesn't exist. Range requests work out of the box via Starlette's
@@ -83,8 +89,25 @@ stays the fixed four-value enum.
   the job; map_fretboard copies them into TabResult (beats/downbeats
   default [] for older jobs). If beat_this fails: logged, librosa's tempo,
   empty beat lists, job continues. ~+5.5s per 100s song. Fast songs
-  (140-176 bpm) come out at half tempo; downbeats ~54% right. Notes are
-  NOT quantized to the beats yet (measured in experiments/rhythm/README.md).
+  (140-176 bpm) come out at half tempo; downbeats ~54% right.
+- Notation (MusicXML export): worker/tasks/rhythm.py (bars, quantization)
+  and worker/tasks/musicxml.py (XML written directly with ElementTree, not
+  music21) are PURE STDLIB - the backend image COPYs them from the
+  "worker" build context (docker-compose.yml backend.build
+  .additional_contexts) and builds the export per request. Keep numpy /
+  Celery / worker imports out of them, and rebuild the BACKEND as well as
+  the worker when they change. A deploy that builds backend/ alone needs
+  that context too. result.bars (map_fretboard, PATCH) comes from
+  rhythm.bar_starts. The TabResult notes stay in raw seconds; only the
+  export is quantized. Choices measured in experiments/rhythm/notation.py:
+  per-step lengths (chords/fast: Basic Pitch length, other single notes:
+  gap to the next note; beats both alone on clean/moderate, ties
+  next-onset on heavy), notes on the same 16th = one chord (the 150ms strum
+  grouping merges fast runs), beats kept at one metrical level before
+  grouping in 4s (firefire's intro is tracked at half tempo). Default 4/4
+  bars are 49-50% downbeat F, a bit under beat_this's irregular downbeats;
+  the overrides reach 61-68%. Validate exports with
+  experiments/musicxml/validate.py (XSD + music21, throwaway container).
 - Pure, Redis/Celery-free helpers for scripts: tasks/audio_io.py
   (job_dir, probe_duration_seconds, normalize_to_wav),
   transcribe.extract_notes, separate.separate_guitar_stem,

@@ -8,7 +8,12 @@ services:
       - "6379:6379"
 
   backend:
-    build: ./backend
+    build:
+      context: ./backend
+      # The worker's pure notation modules (tasks/rhythm.py, musicxml.py),
+      # copied in by backend/Dockerfile for GET /jobs/{id}/musicxml.
+      additional_contexts:
+        worker: ./worker
     ports:
       - "8000:8000"
     environment:

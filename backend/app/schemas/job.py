@@ -18,6 +18,10 @@ class JobStatus(str, Enum):
 # queued or done; left at the failing stage when a job fails.
 JobStage = Literal["ingesting", "separating", "transcribing", "mapping"]
 
+# Job-level notation overrides (tasks/rhythm.TEMPO_FACTORS / BAR_OFFSETS).
+TempoFactor = Literal[0.5, 1.0, 2.0]
+BarOffset = Literal[0, 1, 2, 3]
+
 
 class JobCreateResponse(BaseModel):
     job_id: str
@@ -33,6 +37,20 @@ class JobStatusResponse(BaseModel):
     stage: Optional[JobStage] = None
     # True once the separated guitar stem exists; served by GET /jobs/{id}/stem.
     stem_available: bool = False
+    # Notation overrides (PATCH /jobs/{id}); they change the bars and the
+    # MusicXML export, never the transcription.
+    tempo_factor: TempoFactor = 1.0
+    bar_offset_beats: BarOffset = 0
+
+
+class JobOverrides(BaseModel):
+    """PATCH /jobs/{id} body; fields left out keep their current value.
+    tempo_factor: 0.5 halves beat_this's beats (every other one), 2 doubles
+    them (fast songs often come out at half tempo). bar_offset_beats: moves
+    the bar lines later by this many beats."""
+
+    tempo_factor: Optional[TempoFactor] = None
+    bar_offset_beats: Optional[BarOffset] = None
 
 
 class JobRecord(BaseModel):

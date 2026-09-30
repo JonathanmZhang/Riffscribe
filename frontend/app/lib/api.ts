@@ -35,7 +35,15 @@ export interface TabResult {
   // tracking failed.
   beats?: number[];
   downbeats?: number[];
+  // Bar start times as notated (4/4, after the job's overrides); empty
+  // without beats.
+  bars?: number[];
 }
+
+// Notation overrides (PATCH /jobs/{id}): 0.5 / 2 halve / double the tracked
+// beats; bar_offset_beats moves the bar lines later by 0-3 beats.
+export type TempoFactor = 0.5 | 1 | 2;
+export type BarOffsetBeats = 0 | 1 | 2 | 3;
 
 export interface JobCreateResponse {
   job_id: string;
@@ -54,6 +62,8 @@ export interface JobStatusResponse {
   isolate_guitar: boolean;
   stage: JobStage | null;
   stem_available: boolean;
+  tempo_factor: TempoFactor;
+  bar_offset_beats: BarOffsetBeats;
 }
 
 async function parseOrThrow<T>(response: Response): Promise<T> {
@@ -94,4 +104,22 @@ export async function getJob(jobId: string): Promise<JobStatusResponse> {
 
 export function getJobAudioUrl(jobId: string): string {
   return `${API_BASE_URL}/jobs/${jobId}/audio`;
+}
+
+// Finished jobs only; recomputes the bars without re-transcribing.
+export async function setJobOverrides(
+  jobId: string,
+  overrides: { tempo_factor?: TempoFactor; bar_offset_beats?: BarOffsetBeats },
+): Promise<JobStatusResponse> {
+  const response = await fetch(`${API_BASE_URL}/jobs/${jobId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(overrides),
+  });
+  return parseOrThrow<JobStatusResponse>(response);
+}
+
+// MusicXML download (notation + TAB), built with the job's current overrides.
+export function getJobMusicXmlUrl(jobId: string): string {
+  return `${API_BASE_URL}/jobs/${jobId}/musicxml`;
 }
