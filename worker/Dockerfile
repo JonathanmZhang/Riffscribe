@@ -41,6 +41,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends git \
     && rm -rf /opt/btc/.git /opt/btc/png /opt/btc/test/example.mp3 /opt/btc/test/btc_model.pt \
     && apt-get purge -y git && apt-get autoremove -y && rm -rf /var/lib/apt/lists/*
 
+# Beat tracking (tasks/beats.py): beat_this (MIT, code and weights). It
+# adds only beat-this and rotary-embedding-torch on top of the torch above;
+# protobuf stays < 5 for TensorFlow 2.15. Its "final0" checkpoint is baked
+# in (TORCH_HOME=/app/models) instead of downloading on first use.
+COPY requirements-beats.txt .
+RUN pip install --no-cache-dir -r requirements-beats.txt \
+    && python -c "from beat_this.inference import File2Beats; File2Beats(checkpoint_path='final0', device='cpu', dbn=False)"
+
 COPY tasks/ ./tasks/
 COPY scripts/ ./scripts/
 

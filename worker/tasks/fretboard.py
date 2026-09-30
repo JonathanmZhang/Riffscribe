@@ -330,12 +330,16 @@ def map_fretboard(job_id: str) -> str:
         result = {
             "job_id": job_id,
             "duration_seconds": duration_seconds,
-            # Estimated by transcribe (librosa beat tracking); see
-            # _estimate_tempo_bpm there for reliability caveats.
+            # Estimated by transcribe from beat_this's beats (librosa's
+            # tempo if beat_this failed); see tasks/beats.py for accuracy.
             "tempo_bpm": tempo_bpm,
             "notes": mapped_notes,
             # Timed chord names from transcribe (tasks/chords.py); display-only.
             "chords": job.get("chord_segments") or [],
+            # Beat and bar-start times in seconds (tasks/beats.py); empty if
+            # beat tracking failed.
+            "beats": job.get("beats") or [],
+            "downbeats": job.get("downbeats") or [],
         }
 
         # stage only describes in-progress work, so it's cleared once done. On

@@ -2,7 +2,6 @@ import bisect
 import logging
 import os
 
-import librosa
 import numpy as np
 import pretty_midi
 from basic_pitch import ICASSP_2022_MODEL_PATH
@@ -10,6 +9,7 @@ from basic_pitch.constants import AUDIO_SAMPLE_RATE, FFT_HOP
 from basic_pitch.inference import run_inference
 from basic_pitch.note_creation import model_output_to_notes
 
+from tasks.beats import estimate_rhythm
 from tasks.celery_app import app
 from tasks.chords import recognize_chords
 from tasks.fretboard import CHORD_ONSET_TOLERANCE_SECONDS
@@ -123,21 +123,6 @@ def extract_notes(audio_path: str) -> tuple[int, list[dict]]:
     return len(events), kept
 
 
-def _estimate_tempo_bpm(audio_path: str) -> int:
-    """Global tempo estimate via librosa's onset-based beat tracker, rounded
-    to the nearest integer BPM. This is an ESTIMATE, not a measured tempo:
-    beat_track keys on percussive onsets, so it is noticeably less reliable
-    on solo instrument recordings with no drums or clear pulse (legato
-    playing, rubato, sparse picking), where it can lock onto half/double the
-    felt tempo or onto note density instead of the beat. Returns 0 when no
-    beat is found (e.g. silent audio).
-    """
-    audio, sample_rate = librosa.load(audio_path, sr=None, mono=True)
-    tempo, _beats = librosa.beat.beat_track(y=audio, sr=sample_rate)
-    # librosa >= 0.10 returns tempo as a 1-element array, older versions a scalar.
-    return int(round(float(np.atleast_1d(tempo)[0])))
-
-
 @app.task(name="transcribe", soft_time_limit=120)
 def transcribe(job_id: str) -> str:
     try:
@@ -163,9 +148,11 @@ def transcribe(job_id: str) -> str:
             CONFIDENCE_THRESHOLD,
         )
 
-        # Same file Basic Pitch used, so tempo and notes describe the same audio.
-        tempo_bpm = _estimate_tempo_bpm(audio_path)
-        logger.info("transcribe: job %s estimated tempo ~%d bpm", job_id, tempo_bpm)
+        # Same file Basic Pitch used, so beats and notes describe the same
+        # audio. Falls back to librosa's tempo without beats on failure.
+        rhythm = estimate_rhythm(audio_path)
+        logger.info("transcribe: job %s estimated tempo ~%d bpm, %d beat(s), %d downbeat(s)", job_id,
+                    rhythm["tempo_bpm"], len(rhythm["beats"]), len(rhythm["downbeats"]))
 
         # Chord names for the tab, from the same audio. They're display-only,
         # so a failure here is logged and the job continues without them
@@ -178,7 +165,8 @@ def transcribe(job_id: str) -> str:
                              job_id)
             chord_segments = []
 
-        update_job(job_id, raw_note_events=raw_note_events, tempo_bpm=tempo_bpm, chord_segments=chord_segments)
+        update_job(job_id, raw_note_events=raw_note_events, tempo_bpm=rhythm["tempo_bpm"], beats=rhythm["beats"],
+                   downbeats=rhythm["downbeats"], chord_segments=chord_segments)
     except Exception as exc:
         logger.exception("transcribe failed for job %s", job_id)
         update_job(job_id, status="failed", error=f"transcribe failed: {exc}")

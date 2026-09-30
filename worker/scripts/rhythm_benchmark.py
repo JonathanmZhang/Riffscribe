@@ -8,7 +8,8 @@ each note's real onset in the audio (within ~15ms) but no beats. This
 script lines the two up:
 
   1. Parse the score into note onsets in quarter notes from the start
-     (tied continuations aren't onsets) and bar starts.
+     (tied continuations aren't onsets; they add to the tied note's
+     length) and bar starts.
   2. Match score notes to JAMS notes of the same pitch: first a global
      linear map (offset + seconds per quarter, the GP tempo as a start),
      then refit on the matches.
@@ -91,26 +92,32 @@ def parse_gp(path: str) -> dict:
                "bpm": float(a.findtext("Value").split()[0]), "unit": a.findtext("Value").split()[1]}
               for a in root.iter("Automation") if a.findtext("Type") == "Tempo"]
     bar_list, out_notes, start = [], [], 0.0
+    tied: dict[tuple, dict] = {}  # (voice slot, string) -> the note a tie continues
     for i, mb in enumerate(root.find("MasterBars")):
         num, den = (int(v) for v in mb.findtext("Time").split("/"))
         length = num * 4.0 / den
         bar_list.append({"index": i, "start_q": start, "length_q": length, "time_signature": f"{num}/{den}"})
         bar = bars[mb.findtext("Bars").split()[0]]  # first (only) track
-        for voice_id in bar.findtext("Voices").split():
+        for slot, voice_id in enumerate(bar.findtext("Voices").split()):
             if voice_id == "-1":
                 continue
             pos = start
             for beat_id in (voices[voice_id].findtext("Beats") or "").split():
                 beat = beats[beat_id]
-                dur = rhythm_quarters(rhythms[beat.find("Rhythm").get("ref")])
+                rhythm = rhythms[beat.find("Rhythm").get("ref")]
+                dur = rhythm_quarters(rhythm)
                 for note_id in (beat.findtext("Notes") or "").split():
                     note = notes[note_id]
+                    string = 6 - int(prop(note, "String", "String"))
                     tie = note.find("Tie")
-                    if tie is not None and tie.get("destination") == "true":
-                        continue  # continuation of a tied note, not an onset
+                    if tie is not None and tie.get("destination") == "true" and (slot, string) in tied:
+                        # Continuation of a tied note: not an onset, but part of its length.
+                        tied[(slot, string)]["dur_q"] += dur
+                        continue
                     out_notes.append({"q": round(pos, 6), "dur_q": dur, "midi": int(prop(note, "Midi", "Number")),
-                                      "string": 6 - int(prop(note, "String", "String")),
-                                      "fret": int(prop(note, "Fret", "Fret"))})
+                                      "string": string, "fret": int(prop(note, "Fret", "Fret")),
+                                      "tuplet": rhythm.find("PrimaryTuplet") is not None})
+                    tied[(slot, string)] = out_notes[-1]
                 pos += dur
         start += length
     return {"bars": bar_list, "tempos": tempos, "notes": out_notes, "length_q": start}
@@ -178,6 +185,7 @@ def align(score: dict, audio_notes: list[dict]) -> dict:
         "local_loo_ms": {"median": float(np.median(np.abs(loo)) * 1000),
                          "p90": float(np.percentile(np.abs(loo), 90) * 1000)} if loo else None,
         "local": local,
+        "pairs": pairs,
     }
 
 
@@ -195,6 +203,13 @@ def build_truth(show: list[str]) -> dict:
         downbeats = [float(x) for x in grid(bar_q) if 0.0 <= x <= duration + 0.5]
         # Inter-beat intervals of the local map: how far the player strays from the grid tempo.
         ibi = np.diff(a["local"](beat_q))
+        # Score notes with their rhythm, linked to the JAMS note they matched
+        # (for scoring quantization); unmatched score notes have none.
+        jams_of = dict(a["pairs"])
+        score_notes = [{**{k: n[k] for k in ("q", "dur_q", "midi", "tuplet")},
+                        **({"onset": round(audio_notes[jams_of[i]]["onset"], 4),
+                            "end": round(audio_notes[jams_of[i]]["end"], 4)} if i in jams_of else {})}
+                       for i, n in enumerate(score["notes"])]
         truth[p] = {
             "gp_bpm": score["tempos"][0]["bpm"], "jams_bpm": jams_tempo,
             "time_signatures": sorted({b["time_signature"] for b in score["bars"]}),
@@ -205,6 +220,9 @@ def build_truth(show: list[str]) -> dict:
             "linear_resid_ms": {k: round(v, 1) for k, v in a["linear_resid_ms"].items()},
             "local_loo_ms": {k: round(v, 1) for k, v in a["local_loo_ms"].items()} if a["local_loo_ms"] else None,
             "beats": [round(b, 4) for b in beats], "downbeats": [round(d, 4) for d in downbeats],
+            # The grid itself: time = offset + quarter index * spq.
+            "grid": {"offset": a["offset"], "spq": a["spq"]},
+            "notes": score_notes,
         }
         if p in show:
             print(f"\n{p}: GP {truth[p]['gp_bpm']:g} bpm (JAMS {jams_tempo}), {', '.join(truth[p]['time_signatures'])}, "

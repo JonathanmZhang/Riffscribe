@@ -1,0 +1,5 @@
+# Beat tracking (tasks/beats.py). Installed in its own Docker layer after
+# torch (CPU wheels, pinned in worker/Dockerfile), so changing this file
+# doesn't reinstall the TensorFlow stack in requirements.txt.
+beat-this==1.1.0
+protobuf<5

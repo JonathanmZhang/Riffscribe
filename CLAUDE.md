@@ -76,10 +76,20 @@ stays the fixed four-value enum.
   into the named chord's voicing was measured and gives no gain on
   master's mapper (branch feature/chord-names,
   experiments/chord_names/README.md) - don't add it without new numbers.
+- Beats: tasks/beats.py runs beat_this (MIT, "final0", no DBN; own
+  Docker layer from worker/requirements-beats.txt, checkpoint baked in)
+  in transcribe on the same audio as Basic Pitch. It writes beats,
+  downbeats (seconds) and tempo_bpm (60 / median inter-beat interval) to
+  the job; map_fretboard copies them into TabResult (beats/downbeats
+  default [] for older jobs). If beat_this fails: logged, librosa's tempo,
+  empty beat lists, job continues. ~+5.5s per 100s song. Fast songs
+  (140-176 bpm) come out at half tempo; downbeats ~54% right. Notes are
+  NOT quantized to the beats yet (measured in experiments/rhythm/README.md).
 - Pure, Redis/Celery-free helpers for scripts: tasks/audio_io.py
   (job_dir, probe_duration_seconds, normalize_to_wav),
   transcribe.extract_notes, separate.separate_guitar_stem,
-  fretboard.map_notes_to_positions. scripts/ab_separation.py uses them.
+  fretboard.map_notes_to_positions, beats.track_beats.
+  scripts/ab_separation.py uses them.
 - Worker code is NOT volume-mounted: tasks/ and scripts/ are both
   COPY'd into the image, so ANY change under worker/ needs a rebuild
   (docker compose up -d --build worker worker-separation — both services
@@ -233,6 +243,20 @@ stays the fixed four-value enum.
   ground truth for real distorted / full-mix recordings. Adding YourMT3+
   or amt-tools to the worker unpinned pulls protobuf 7 and breaks TF
   2.15 - pin protobuf<5.
+- Tested and rejected (experiments/rhythm/bars.py): choosing the bar
+  phase from BTC chord changes (+ low-note onsets, + beat_this's own
+  downbeats as a prior; global or per-±2-bar phase; M from beat_this or
+  assumed 4) on beat_this's beats. Every variant is below beat_this's own
+  downbeats (53.9/55.1/52.6% F), and even the best single phase chosen
+  from the truth only ties it. The limit is beat slips, a wrong
+  beats-per-bar, and half tempo, not the phase. Don't retry a phase
+  heuristic.
+- Quantization groundwork (experiments/rhythm/quantize.py): snapping
+  starts to 16ths is 99% right on true beats and 95-98% on beat_this's.
+  Lengths from Basic Pitch's note ends are only 55-64% right (mostly too
+  short), and even the true JAMS durations give 80%. Time to the next
+  onset is better for single-note lines, worse for chords. Triplets are
+  1.5% of EGSet12's GP onsets, so 16ths suffice there.
 - On Windows/Git Bash specifically: `docker compose exec` container
   paths can get mangled by Git Bash's POSIX-path conversion — prefix
   with MSYS_NO_PATHCONV=1.

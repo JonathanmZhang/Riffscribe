@@ -247,7 +247,9 @@ export default function TabViewer({ result, audioRef }: TabViewerProps) {
       <dl className="flex flex-wrap gap-2 text-xs">
         {[
           ["Duration", `${result.duration_seconds.toFixed(2)}s`],
-          // Estimated by beat tracking, not measured - shown as approximate.
+          // From the tracked beats (beat_this; librosa's estimate on older
+          // jobs or if tracking failed) - shown as approximate. Fast songs
+          // can come out at half tempo.
           ["Tempo (est.)", result.tempo_bpm > 0 ? `~${result.tempo_bpm} bpm` : "unknown"],
           ["Notes", String(result.notes.length)],
         ].map(([label, value]) => (

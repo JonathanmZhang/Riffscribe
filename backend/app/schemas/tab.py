@@ -24,3 +24,7 @@ class TabResult(BaseModel):
     notes: List[Note]
     # Empty for jobs finished before chord names existed.
     chords: List[ChordSegment] = []
+    # Beat and bar-start (downbeat) times in seconds. Empty for jobs
+    # finished before beat tracking existed, or if it failed.
+    beats: List[float] = []
+    downbeats: List[float] = []

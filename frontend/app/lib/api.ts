@@ -31,6 +31,10 @@ export interface TabResult {
   notes: Note[];
   // Missing on jobs finished before chord names existed.
   chords?: ChordSegment[];
+  // Beat and bar-start times in seconds; empty for older jobs or if beat
+  // tracking failed.
+  beats?: number[];
+  downbeats?: number[];
 }
 
 export interface JobCreateResponse {

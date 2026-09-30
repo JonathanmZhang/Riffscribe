@@ -72,10 +72,14 @@ Three chained tasks, not one monolithic task:
    (mono, 22.05kHz). Writes artifact path to Redis.
 2. transcribe(job_id) — runs Basic Pitch, produces note events
    (pitch, start_time, end_time, velocity, confidence). Filters notes
-   below confidence threshold (0.5 default). Also estimates tempo_bpm
-   via librosa.beat.beat_track() on the normalized audio (rounded to an
-   integer; an estimate, least reliable on solo recordings with no
-   percussive beat), stored in the job's Redis record for map_fretboard.
+   below confidence threshold (0.5 default). Also tracks beats and
+   downbeats with beat_this (tasks/beats.py; MIT, "final0" checkpoint, no
+   DBN) on the same audio, and derives tempo_bpm from the beats (60 /
+   median inter-beat interval, rounded to an integer). All three go in the
+   job's Redis record for map_fretboard. If beat_this fails, the error is
+   logged and the job continues with librosa.beat.beat_track()'s tempo and
+   empty beat lists. The tempo is an estimate: fast songs can come out at
+   half tempo, and downbeats are only about half right.
    Also names chords from the same audio with BTC (tasks/chords.py; large
    vocabulary, 12 roots x 14 qualities) and stores the timed segments as
    the internal chord_segments field. Chord names are display-only: if
@@ -118,7 +122,9 @@ combination (hand-shape realism is a stretch goal).
   "chords": [
     {"start": 0.0, "end": 1.3, "name": "E"},
     {"start": 1.76, "end": 2.87, "name": "Am7"}
-  ]
+  ],
+  "beats": [0.012, 0.512, 1.013],
+  "downbeats": [0.012]
 }
 
 Time is stored in raw seconds, not beats/measures, for v1. "chords" are
@@ -126,7 +132,10 @@ BTC's segments with no-chord stretches left out and repeats merged;
 names are root + suffix ("", m, dim, aug, 6, m6, 7, m7, maj7, m(maj7),
 dim7, m7b5, sus2, sus4), roots spelled with sharps. It's an empty list
 for jobs finished before chord names existed. TabViewer prints a name
-above the first column of each chord change.
+above the first column of each chord change. "beats" and "downbeats" are
+beat and bar-start times in seconds (downbeats a subset of beats); both
+are empty for jobs finished before beat tracking existed or when it
+failed. Notes are not quantized to them yet.
 
 ### 3.7 Known Edge Cases
 
