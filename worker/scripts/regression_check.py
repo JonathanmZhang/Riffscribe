@@ -30,6 +30,7 @@ import tempfile  # noqa: E402
 
 import pretty_midi  # noqa: E402
 
+from scripts import build_info  # noqa: E402
 from scripts.chord_stages import (  # noqa: E402
     PIPELINE,
     StageConfig,
@@ -181,7 +182,11 @@ def print_report(cur: dict, base: dict | None) -> None:
         delta = val - ref
         return s + (f" ({delta:+.1%})" if pct else f" ({delta:+g})") if delta else s + " (=)"
 
-    print(f"\nsettings: {cur['config']}" + (f"   [baseline: {base['config']}]" if base else ""))
+    def commit(r):
+        return ((r or {}).get("build") or {}).get("image", {}).get("commit", "unknown")[:10]
+
+    print(f"\nworker image commit: {commit(cur)}" + (f"   [baseline: {commit(base)}]" if base else ""))
+    print(f"settings: {cur['config']}" + (f"   [baseline: {base['config']}]" if base else ""))
     print("  synthetic (per program): recall mapped | precision | complete % (fast) | extras in tab | lost a/b/c/d")
     for prog, s in cur["synthetic"].items():
         r = base["synthetic"][prog] if base else None
@@ -224,14 +229,16 @@ def main() -> None:
     parser.add_argument("--compare", help="baseline results JSON to compare against")
     parser.add_argument("--configs", nargs="+", help='sweep: e.g. "threshold=0.4" "chord_floor=0.35"')
     add_config_args(parser)
+    build_info.add_args(parser)
     args = parser.parse_args()
+    build = build_info.guard(args.allow_stale)
     logging.getLogger("tasks.fretboard").setLevel(logging.ERROR)
 
     base = json.load(open(args.compare)) if args.compare else None
     configs = [_parse_spec(s) for s in args.configs] if args.configs else [config_from_args(args)]
     results = []
     for config in configs:
-        cur = run_all(config)
+        cur = {"build": build, **run_all(config)}
         print_report(cur, base)
         results.append(cur)
     if args.save:

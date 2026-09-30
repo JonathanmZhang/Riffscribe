@@ -22,7 +22,12 @@ services:
       - ./data:/app/data
 
   worker:
-    build: ./worker
+    build:
+      context: ./worker
+      # .git as a named context, so the image records the commit it was
+      # built from (scripts/build_info.py; checked by the measurement scripts).
+      additional_contexts:
+        gitmeta: ./.git
     # Default queue only (ingest, transcribe, map). Concurrency 2: this is a
     # single-user local app, and each process loads its own TensorFlow model.
     command: celery -A tasks.celery_app worker --loglevel=info -Q celery --concurrency 2 -n main@%h
@@ -44,9 +49,15 @@ services:
       - redis
     volumes:
       - ./data:/app/data
+      # Read-only checkout: the measurement scripts compare it with the
+      # image's code (scripts/build_info.py). The pipeline doesn't use it.
+      - .:/repo:ro
 
   worker-separation:
-    build: ./worker
+    build:
+      context: ./worker
+      additional_contexts:
+        gitmeta: ./.git
     # Guitar separation only, one at a time: each Demucs run needs ~3GB RAM.
     command: celery -A tasks.celery_app worker --loglevel=info -Q separation --concurrency 1 -n separation@%h
     environment:
@@ -63,6 +74,7 @@ services:
       - redis
     volumes:
       - ./data:/app/data
+      - .:/repo:ro
 
   frontend:
     build:

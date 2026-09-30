@@ -83,7 +83,18 @@ stays the fixed four-value enum.
 - Worker code is NOT volume-mounted: tasks/ and scripts/ are both
   COPY'd into the image, so ANY change under worker/ needs a rebuild
   (docker compose up -d --build worker worker-separation — both services
-  use the same image). Only ./data is mounted.
+  use the same image). Only ./data is mounted for the pipeline; the
+  repo is also mounted read-only at /repo, used only by the stale-image
+  guard below.
+- Stale-image guard: the worker image records the commit and a hash of
+  its worker code (scripts/build_info.py, /app/BUILD_INFO.json; compose
+  passes .git as the "gitmeta" build context). regression_check,
+  egset12_benchmark, eval_chords, inspect_chords, ab_separation and the
+  experiments/ scripts print it first and refuse to run if it doesn't
+  match the checkout at /repo, unless --allow-stale. With a plain
+  `docker run`, mount the repo: -v <repo>:/repo:ro. Always rebuild
+  before measuring - a stale hand-position image once skewed every
+  position number in three experiments.
 - Frontend has a light Tailwind polish pass done (colors, layout, status
   badges, sticky grid headers) but no real design system yet — a Figma
   pass is planned later. Don't over-invest further in visual redesign
@@ -203,12 +214,14 @@ stays the fixed four-value enum.
   within 50ms merged across programs - its instrument labels are
   useless, 78% of a Telecaster came
   out as piano/other - then through our run_stages/mapper). EGSet12 tab
-  recall/precision [position] vs Basic Pitch: clean 74.5/77.4 [48.5] vs
-  71.9/85.2 [57.0] (F1 75.9 vs 78.0), moderate F1 66.3 vs 66.0, heavy
+  recall/precision [position] vs Basic Pitch: clean 74.5/77.4 [49.1] vs
+  71.9/85.2 [53.2] (F1 75.9 vs 78.0), moderate F1 66.3 vs 66.0, heavy
   60.6/55.1 vs 38.5/71.7 (F1 57.7 vs 50.1, but that's processed
-  distortion, not a real amp). Fast-passage position agreement is ~half
-  Basic Pitch's. One-octave errors are 41-45% of its false notes and
-  neither simple fix helps (dropping upper octaves costs more recall than
+  distortion, not a real amp). Position agreement is 2-4 points lower
+  (moderate 46.3 vs 48.3, heavy 42.9 vs 45.0; positions re-scored on
+  master's mapper - the first run used a stale hand-position image).
+  One-octave errors are 41-45% of its false notes and neither simple
+  fix helps (dropping upper octaves costs more recall than
   it gains precision; ~10% of true notes are real octave doublings). On
   the firefire stem it makes denser chords but the mapper drops 32
   notes/window as unplayable. Per 102s song: Basic Pitch 5s, +Demucs ~94s,

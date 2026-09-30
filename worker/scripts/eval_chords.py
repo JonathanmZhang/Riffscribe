@@ -38,6 +38,7 @@ import time  # noqa: E402
 
 import pretty_midi  # noqa: E402
 
+from scripts import build_info  # noqa: E402
 from scripts.chord_stages import (  # noqa: E402
     CHORD_ONSET_TOLERANCE_SECONDS,
     PIPELINE,
@@ -243,7 +244,9 @@ def main() -> None:
     parser.add_argument("--out", help="JSON results path (default: <testset>/eval[_separated].json)")
     parser.add_argument("--worst", type=int, default=3, help="how many worst chords to detail (default 3)")
     add_config_args(parser)
+    build_info.add_args(parser)
     args = parser.parse_args()
+    build_info.guard(args.allow_stale)
     config = config_from_args(args)
 
     truth_paths = sorted(glob.glob(os.path.join(args.testset, "chords_prog*.json")))

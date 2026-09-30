@@ -30,6 +30,7 @@ import tempfile  # noqa: E402
 
 import pretty_midi  # noqa: E402
 
+from scripts import build_info  # noqa: E402
 from scripts.chord_stages import (  # noqa: E402
     CHORD_ONSET_TOLERANCE_SECONDS,
     PIPELINE,
@@ -136,7 +137,9 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=0, help="separation seed (default 0)")
     parser.add_argument("--expect", help='expected chord notes, e.g. "G2,B2,D3" or "G,B,D"')
     add_config_args(parser)
+    build_info.add_args(parser)
     args = parser.parse_args()
+    build_info.guard(args.allow_stale)
     inspect(args.file, args.start_s, args.end_s, args.separate, args.seed, args.expect, config_from_args(args))
 
 

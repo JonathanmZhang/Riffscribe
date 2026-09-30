@@ -6,6 +6,7 @@ Writes data/_chord_names/btc/egset12_<tone>_<NN>.json =
 Inference mirrors BTC's own test.py.
 """
 
+import argparse
 import json
 import os
 import sys
@@ -19,6 +20,7 @@ import numpy as np  # noqa: E402
 import torch  # noqa: E402
 import yaml  # noqa: E402
 
+from scripts import build_info  # noqa: E402
 from scripts.egset12_benchmark import PERFORMANCES, TONES, audio_path  # noqa: E402
 
 BTC_DIR = "/opt/btc"
@@ -69,6 +71,9 @@ def segments(path: str, model, config, mean, std, idx) -> tuple[list[dict], floa
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    build_info.add_args(parser)
+    build_info.guard(parser.parse_args().allow_stale)
     os.makedirs(OUT, exist_ok=True)
     loaded = load()
     for tone in TONES:

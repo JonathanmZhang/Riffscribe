@@ -30,6 +30,7 @@ os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "2")
 sys.path.insert(0, "/app")
 sys.path.insert(0, os.path.dirname(__file__))
 
+import argparse  # noqa: E402
 import json  # noqa: E402
 import logging  # noqa: E402
 import tempfile  # noqa: E402
@@ -37,6 +38,7 @@ from functools import lru_cache  # noqa: E402
 from itertools import product  # noqa: E402
 
 from chordlib import NO_CHORD, Chord, from_harte, from_midis, label_at  # noqa: E402
+from scripts import build_info  # noqa: E402
 from scripts.chord_stages import PIPELINE, detect_file, run_stages  # noqa: E402
 from scripts.egset12_benchmark import BENCHMARK_JSON, SEGMENT_TYPES, TONES, _match, audio_path, load_truth  # noqa: E402
 from scripts.egset12_benchmark import evaluate as evaluate_bp  # noqa: E402
@@ -127,6 +129,9 @@ def reposition(step: dict, chord: Chord, min_notes: int = 2) -> tuple[list[dict]
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    build_info.add_args(parser)
+    build_info.guard(parser.parse_args().allow_stale)
     logging.getLogger("tasks.fretboard").setLevel(logging.ERROR)
     benchmark = json.load(open(BENCHMARK_JSON))
     counts: dict = {}

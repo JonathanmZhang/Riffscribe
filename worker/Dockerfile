@@ -43,4 +43,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends git \
 
 COPY tasks/ ./tasks/
 COPY scripts/ ./scripts/
+
+# Build provenance for the measurement scripts' stale-image guard
+# (scripts/build_info.py): the commit this image was built from, read from
+# the repo's .git (the "gitmeta" build context in docker-compose.yml), and a
+# hash of the code above. Last, so a new commit only re-runs this layer.
+COPY --from=gitmeta HEAD packed-ref[s] /tmp/gitmeta/
+COPY --from=gitmeta refs /tmp/gitmeta/refs
+RUN python -m scripts.build_info record && rm -rf /tmp/gitmeta
 CMD ["celery", "-A", "tasks.celery_app", "worker", "--loglevel=info"]

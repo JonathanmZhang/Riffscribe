@@ -29,6 +29,7 @@ import pretty_midi  # noqa: E402
 import soundfile as sf  # noqa: E402
 import torch  # noqa: E402
 
+from scripts import build_info  # noqa: E402
 from tasks.audio_io import (  # noqa: E402
     TARGET_SAMPLE_RATE,
     ensure_decodable_audio,
@@ -193,7 +194,9 @@ def main() -> None:
         "--seed", type=int, default=0,
         help="seed for Python random, numpy and torch before separation, so repeat runs match (default 0)",
     )
+    build_info.add_args(parser)
     args = parser.parse_args()
+    build_info.guard(args.allow_stale)
 
     # map_notes_to_positions logs a warning per dropped note; the counts are
     # in the table, so keep the output readable.

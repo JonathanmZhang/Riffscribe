@@ -42,6 +42,7 @@ import numpy as np  # noqa: E402
 import pretty_midi  # noqa: E402
 import soundfile as sf  # noqa: E402
 
+from scripts import build_info  # noqa: E402
 from scripts.chord_stages import (  # noqa: E402
     PIPELINE,
     StageConfig,
@@ -317,7 +318,9 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("command", choices=["build", "eval"])
     add_config_args(parser)
+    build_info.add_args(parser)
     args = parser.parse_args()
+    build_info.guard(args.allow_stale)
     logging.getLogger("tasks.fretboard").setLevel(logging.ERROR)
     if args.command == "build":
         b = build()
