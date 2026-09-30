@@ -46,7 +46,9 @@ riffscribe/
 
 ### 3.2 Tech Stack — Pinned Choices
 
-FastAPI (Python 3.11), Celery 5.x, Redis 7.x, basic-pitch (pip),
+FastAPI (Python 3.11), Celery 5.x, Valkey 8 (BSD-licensed Redis fork, used
+as the Redis server; the compose service is still named "redis"),
+basic-pitch (pip), BTC chord recognizer (cloned into the worker image),
 librosa + ffmpeg-python, yt-dlp, Next.js 14 (App Router) + TypeScript.
 Audio sync via native <audio> element + requestAnimationFrame polling.
 
@@ -74,8 +76,13 @@ Three chained tasks, not one monolithic task:
    via librosa.beat.beat_track() on the normalized audio (rounded to an
    integer; an estimate, least reliable on solo recordings with no
    percussive beat), stored in the job's Redis record for map_fretboard.
+   Also names chords from the same audio with BTC (tasks/chords.py; large
+   vocabulary, 12 roots x 14 qualities) and stores the timed segments as
+   the internal chord_segments field. Chord names are display-only: if
+   recognition fails, the error is logged and the job continues with none.
 3. map_fretboard(job_id) — runs DP mapping algorithm, produces final
-   TabResult, sets status to "done".
+   TabResult (copying chord_segments into its "chords"), sets status to
+   "done".
 
 Each task sets status: "processing" at start, catches exceptions to set
 status: "failed" with a clear error message. soft_time_limit: 120s per task.
@@ -107,10 +114,19 @@ combination (hand-shape realism is a stretch goal).
   "tempo_bpm": 120,
   "notes": [
     {"string": 5, "fret": 3, "start_time": 1.24, "end_time": 1.58, "pitch": "C4"}
+  ],
+  "chords": [
+    {"start": 0.0, "end": 1.3, "name": "E"},
+    {"start": 1.76, "end": 2.87, "name": "Am7"}
   ]
 }
 
-Time is stored in raw seconds, not beats/measures, for v1.
+Time is stored in raw seconds, not beats/measures, for v1. "chords" are
+BTC's segments with no-chord stretches left out and repeats merged;
+names are root + suffix ("", m, dim, aug, 6, m6, 7, m7, maj7, m(maj7),
+dim7, m7b5, sus2, sus4), roots spelled with sharps. It's an empty list
+for jobs finished before chord names existed. TabViewer prints a name
+above the first column of each chord change.
 
 ### 3.7 Known Edge Cases
 

@@ -334,6 +334,8 @@ def map_fretboard(job_id: str) -> str:
             # _estimate_tempo_bpm there for reliability caveats.
             "tempo_bpm": tempo_bpm,
             "notes": mapped_notes,
+            # Timed chord names from transcribe (tasks/chords.py); display-only.
+            "chords": job.get("chord_segments") or [],
         }
 
         # stage only describes in-progress work, so it's cleared once done. On

@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
-import type { Note, TabResult } from "@/app/lib/api";
+import type { ChordSegment, Note, TabResult } from "@/app/lib/api";
 
 // Display order top-to-bottom matches conventional tab notation: high e on
 // top, low E on bottom - the reverse of the string numbering (1 = high e).
@@ -56,6 +56,19 @@ export function groupIntoSteps(notes: Note[]): TabStep[] {
   return steps;
 }
 
+// The chord name to print above each column: the chord sounding at the
+// column's start, shown only where it differs from the last name shown, so a
+// held chord is labelled once. Columns with no chord (or the same one) get null.
+export function chordLabels(steps: TabStep[], chords: ChordSegment[]): (string | null)[] {
+  let last: string | null = null;
+  return steps.map((step) => {
+    const chord = chords.find((c) => c.start <= step.time && step.time < c.end);
+    if (!chord || chord.name === last) return null;
+    last = chord.name;
+    return chord.name;
+  });
+}
+
 // Index of the last column that has started at media time t, or -1.
 function currentStepIndex(stepTimes: number[], t: number): number {
   let lo = 0;
@@ -83,6 +96,7 @@ interface TabViewerProps {
 export default function TabViewer({ result, audioRef }: TabViewerProps) {
   const steps = useMemo(() => groupIntoSteps(result.notes), [result.notes]);
   const stepTimes = useMemo(() => steps.map((s) => s.time), [steps]);
+  const chordNames = useMemo(() => chordLabels(steps, result.chords ?? []), [steps, result.chords]);
   const sortedNotes = useMemo(() => [...result.notes].sort((a, b) => a.start_time - b.start_time), [result.notes]);
   const stepOfNote = useMemo(() => {
     const map = new Map<Note, number>();
@@ -259,6 +273,18 @@ export default function TabViewer({ result, audioRef }: TabViewerProps) {
       <div ref={scrollerRef} className="overflow-x-auto rounded-lg border border-slate-200 bg-slate-50">
         <table ref={tableRef} className="border-collapse font-mono text-sm" data-active-step={-1}>
           <tbody>
+            {chordNames.some(Boolean) && (
+              <tr className="border-b border-slate-200">
+                <td className="sticky left-0 z-10 border-r border-slate-200 bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-400">
+                  Chord
+                </td>
+                {chordNames.map((name, i) => (
+                  <td key={i} className="whitespace-nowrap px-2 py-1 text-left text-xs font-semibold text-indigo-700">
+                    {name ?? ""}
+                  </td>
+                ))}
+              </tr>
+            )}
             {STRING_DISPLAY_ORDER.map((string) => (
               <tr key={string}>
                 <td className="sticky left-0 z-10 border-r border-slate-200 bg-slate-100 px-3 py-1 font-semibold text-slate-500">

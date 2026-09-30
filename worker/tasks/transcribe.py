@@ -11,6 +11,7 @@ from basic_pitch.inference import run_inference
 from basic_pitch.note_creation import model_output_to_notes
 
 from tasks.celery_app import app
+from tasks.chords import recognize_chords
 from tasks.fretboard import CHORD_ONSET_TOLERANCE_SECONDS
 from tasks.storage import get_job, update_job
 
@@ -166,7 +167,18 @@ def transcribe(job_id: str) -> str:
         tempo_bpm = _estimate_tempo_bpm(audio_path)
         logger.info("transcribe: job %s estimated tempo ~%d bpm", job_id, tempo_bpm)
 
-        update_job(job_id, raw_note_events=raw_note_events, tempo_bpm=tempo_bpm)
+        # Chord names for the tab, from the same audio. They're display-only,
+        # so a failure here is logged and the job continues without them
+        # rather than losing the transcription.
+        try:
+            chord_segments = recognize_chords(audio_path)
+            logger.info("transcribe: job %s recognized %d chord segment(s)", job_id, len(chord_segments))
+        except Exception:
+            logger.exception("transcribe: chord recognition failed for job %s; continuing without chord names",
+                             job_id)
+            chord_segments = []
+
+        update_job(job_id, raw_note_events=raw_note_events, tempo_bpm=tempo_bpm, chord_segments=chord_segments)
     except Exception as exc:
         logger.exception("transcribe failed for job %s", job_id)
         update_job(job_id, status="failed", error=f"transcribe failed: {exc}")

@@ -17,11 +17,20 @@ export interface Note {
   pitch: string;
 }
 
+// A recognized chord over [start, end) seconds (BTC, in the worker).
+export interface ChordSegment {
+  start: number;
+  end: number;
+  name: string;
+}
+
 export interface TabResult {
   job_id: string;
   duration_seconds: number;
   tempo_bpm: number;
   notes: Note[];
+  // Missing on jobs finished before chord names existed.
+  chords?: ChordSegment[];
 }
 
 export interface JobCreateResponse {

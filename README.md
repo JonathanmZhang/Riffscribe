@@ -65,7 +65,7 @@ Tested on Windows 11 with Docker Desktop (WSL 2).
 |----------|---------|
 | Frontend | http://localhost:3000 |
 | API      | http://localhost:8000 (interactive docs at http://localhost:8000/docs) |
-| Redis    | localhost:6379 |
+| Redis (Valkey) | localhost:6379 |
 
 To stop everything, run `docker compose down`. Uploaded and normalized audio is kept in `./data/{job_id}/` inside the repo folder.
 
@@ -168,7 +168,7 @@ Riffscribe v1 has been tested against synthetic test tones, real guitar recordin
 ## Tech stack
 
 - **Backend:** Python 3.11, FastAPI, Pydantic
-- **Task queue:** Celery, Redis 7
+- **Task queue:** Celery, with Valkey 8 (a Redis-compatible fork) as broker and job store
 - **Audio / ML:** Spotify Basic Pitch, librosa, pretty_midi, yt-dlp
 - **Fretboard mapping:** custom dynamic-programming (Viterbi-style) algorithm in pure Python
 - **Frontend:** Next.js 14 (App Router), TypeScript, Tailwind CSS
@@ -217,8 +217,9 @@ Riffscribe's own code is released under the [MIT license](LICENSE). Third-party 
 | yt-dlp | link ingestion | Unlicense |
 | FFmpeg (Debian package) | decoding video/compressed audio, run as a separate program | GPL (Debian builds with `--enable-gpl`) |
 | Celery | task queue | BSD-3-Clause |
+| [BTC](https://github.com/jayg996/BTC-ISMIR19) (code and large-vocabulary model) | chord names | MIT |
 | redis-py | Redis client | MIT |
-| Redis server (`redis:7-alpine` image, currently 7.4) | queue broker and job state, run unmodified as a separate service | RSALv2 / SSPLv1 (source-available; Redis 7.2 and earlier were BSD-3-Clause) |
+| [Valkey](https://valkey.io/) server (`valkey/valkey:8-alpine` image; a Redis-compatible fork, used in place of Redis 7.4+, which is RSALv2/SSPLv1) | queue broker and job state, run unmodified as a separate service | BSD-3-Clause |
 | FastAPI, Pydantic | API | MIT |
 | Uvicorn | ASGI server | BSD-3-Clause |
 | python-multipart | uploads | Apache-2.0 |

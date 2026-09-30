@@ -7,7 +7,8 @@ condensed, enforceable rules Claude Code should follow every session.
 
 ## Stack (do not substitute without asking)
 - Backend: FastAPI (Python 3.11), in backend/app/
-- Task queue: Celery + Redis, worker code in worker/tasks/
+- Task queue: Celery + Redis protocol, served by Valkey 8 (BSD fork of
+  Redis; compose service still named "redis"), worker code in worker/tasks/
 - ML: Spotify's basic-pitch for pitch detection, librosa for audio prep
 - Frontend: Next.js 14 (App Router) + TypeScript, in frontend/
 - Everything runs via docker-compose.yml — don't suggest running services
@@ -62,10 +63,19 @@ stays the fixed four-value enum.
 - Internal intermediate pipeline data (e.g. raw_note_events) stays out
   of the public TabResult schema. Other internal job fields:
   source_audio_path / source_duration_seconds (ingest), stem_audio_path /
-  transcription_audio_path / separation_seconds (separate_guitar).
+  transcription_audio_path / separation_seconds (separate_guitar),
+  chord_segments (transcribe; copied into TabResult.chords by
+  map_fretboard).
   transcribe reads transcription_audio_path if set, else
   normalized_audio_path. The API exposes only stage, isolate_guitar and
   stem_available (plus GET /jobs/{id}/stem), read from the raw dict.
+- Chord names: tasks/chords.py runs BTC (MIT; cloned into the image at
+  /opt/btc, pinned commit, sed-patched for removed numpy aliases) in
+  transcribe on the same audio as Basic Pitch. Display-only: a failure
+  is logged and the job continues without chords. Moving detected notes
+  into the named chord's voicing was measured and gives no gain on
+  master's mapper (branch feature/chord-names,
+  experiments/chord_names/README.md) - don't add it without new numbers.
 - Pure, Redis/Celery-free helpers for scripts: tasks/audio_io.py
   (job_dir, probe_duration_seconds, normalize_to_wav),
   transcribe.extract_notes, separate.separate_guitar_stem,

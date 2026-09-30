@@ -1,6 +1,9 @@
 services:
+  # Valkey: the BSD-3-Clause fork of Redis, protocol-compatible (Redis 7.4+
+  # is RSALv2/SSPLv1). The service keeps the name "redis", so REDIS_URL and
+  # the Celery broker/backend URLs are unchanged.
   redis:
-    image: redis:7-alpine
+    image: valkey/valkey:8-alpine
     ports:
       - "6379:6379"
 

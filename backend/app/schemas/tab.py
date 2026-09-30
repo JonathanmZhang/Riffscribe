@@ -11,8 +11,16 @@ class Note(BaseModel):
     pitch: str
 
 
+class ChordSegment(BaseModel):
+    start: float
+    end: float
+    name: str
+
+
 class TabResult(BaseModel):
     job_id: str
     duration_seconds: float
     tempo_bpm: float
     notes: List[Note]
+    # Empty for jobs finished before chord names existed.
+    chords: List[ChordSegment] = []

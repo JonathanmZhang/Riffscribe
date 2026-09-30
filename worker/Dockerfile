@@ -29,6 +29,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends fluidsynth flui
 # for the processed-distortion versions of the EGSet12 benchmark.
 RUN pip install --no-cache-dir pedalboard==0.9.16
 
+# Chord names (tasks/chords.py): BTC (MIT, code and weights), cloned at a
+# pinned commit; only the large-vocabulary checkpoint is kept. It runs on
+# the packages above (torch, librosa, mir_eval, PyYAML). Its numpy aliases
+# (np.float/np.int/np.bool) were removed in numpy 1.24; the builtins are
+# exact replacements.
+ARG BTC_SHA=2682317be668032e6e4b269ded36adaa2ad57df0
+RUN apt-get update && apt-get install -y --no-install-recommends git \
+    && git clone https://github.com/jayg996/BTC-ISMIR19 /opt/btc && git -C /opt/btc checkout $BTC_SHA \
+    && sed -i -E 's/\bnp\.(float|int|bool)\b/\1/g' /opt/btc/utils/*.py /opt/btc/*.py \
+    && rm -rf /opt/btc/.git /opt/btc/png /opt/btc/test/example.mp3 /opt/btc/test/btc_model.pt \
+    && apt-get purge -y git && apt-get autoremove -y && rm -rf /var/lib/apt/lists/*
+
 COPY tasks/ ./tasks/
 COPY scripts/ ./scripts/
 CMD ["celery", "-A", "tasks.celery_app", "worker", "--loglevel=info"]
