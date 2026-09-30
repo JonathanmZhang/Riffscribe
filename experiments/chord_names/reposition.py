@@ -100,12 +100,12 @@ def tab_steps(stages: dict) -> list[dict]:
     return steps
 
 
-def reposition(step: dict, chord: Chord) -> tuple[list[dict], str]:
+def reposition(step: dict, chord: Chord, min_notes: int = 2) -> tuple[list[dict], str]:
     """Returns (notes, outcome); outcome is one of: single, no_chord,
     not_in_chord, no_voicing, same, moved."""
     notes = step["notes"]
-    if len(notes) < 2:
-        return notes, "single"
+    if len(notes) < min_notes:
+        return notes, "single" if len(notes) == 1 else "too_few"
     if chord.root is None:
         return notes, "no_chord"
     if any(n["midi"] % 12 not in chord.pcs for n in notes):
@@ -158,10 +158,11 @@ def main() -> None:
                 return min(near, key=lambda x: x[0])[1] if near else NO_CHORD
 
             systems = {"today": [n for s in steps for n in s["notes"]]}
-            for name, namer in (("btc", lambda t: from_harte(label_at(labels, t))), ("oracle", oracle)):
+            btc_namer = lambda t: from_harte(label_at(labels, t))  # noqa: E731
+            for name, namer, min_notes in (("btc", btc_namer, 2), ("btc3", btc_namer, 3), ("oracle", oracle, 2)):
                 out = []
                 for step in steps:
-                    notes, outcome = reposition(step, namer(step["t"]))
+                    notes, outcome = reposition(step, namer(step["t"]), min_notes)
                     out += notes
                     o = outcomes.setdefault(f"{name}|{tone}", {})
                     o[outcome] = o.get(outcome, 0) + 1
@@ -173,7 +174,7 @@ def main() -> None:
             # Per matched note: did repositioning fix or break its position?
             # (Same notes in the same order in every system, so the matches agree.)
             base_matches = _match(truth, systems["today"])
-            for system in ("btc", "oracle"):
+            for system in ("btc", "btc3", "oracle"):
                 f = flips.setdefault(f"{system}|{tone}", {"fixed": 0, "broken": 0, "wrong_to_wrong": 0})
                 for i, j in base_matches.items():
                     t, a, b = truth[i], systems["today"][j], systems[system][j]
@@ -214,11 +215,11 @@ def main() -> None:
         }
     json.dump(result, open(OUT, "w"), indent=1)
 
-    print("tone      type          pitch R/P (all systems)   pitch F1 | position agreement: today  btc  oracle | "
-          "tab F1 (pitch+position): today  btc  oracle")
+    print("tone      type          pitch R/P (all systems)   pitch F1 | position agreement: today  btc  btc3  oracle | "
+          "tab F1 (pitch+position): today  btc  btc3  oracle")
     for tone in TONES:
         for kind in ["all"] + SEGMENT_TYPES:
-            s = {k: result["scores"][f"{k}|{tone}|{kind}"] for k in ("today", "btc", "oracle")}
+            s = {k: result["scores"][f"{k}|{tone}|{kind}"] for k in ("today", "btc", "btc3", "oracle")}
             print(f"{tone:<9} {kind:<12} {s['today']['recall']:6.1%} / {s['today']['precision']:6.1%}   "
                   f"{s['today']['pitch_f1'] * 100:5.1f}   | " + "  ".join(f"{s[k]['position']:6.1%}" for k in s) +
                   "  | " + "  ".join(f"{s[k]['tab_f1'] * 100:5.1f}" for k in s) + f"   n={s['today']['truth']}")

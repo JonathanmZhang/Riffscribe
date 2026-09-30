@@ -1,5 +1,24 @@
 # Chord names: reposition-only measurement (2026-09-29)
 
+> **Correction, re-measured on master's mapper: no gain.** The first run
+> (the tables further down) used a `stratotab-worker` image that had been
+> built from the rejected `feature/hand-position` branch. Its mapper gives
+> clean position agreement 57.0%, while master's gives 53.2%. Rebuilt from
+> master, with every other setting the same:
+>
+> | position agreement, all segments | today | reposition ≥2 notes | ≥3 notes | oracle names |
+> |---|---|---|---|---|
+> | clean | 53.2 | 53.2 | 53.1 | 53.9 |
+> | moderate | 48.3 | 48.3 | 48.3 | 48.6 |
+> | heavy | 45.0 | 44.9 | 45.0 | 45.2 |
+>
+> On clean audio, repositioning fixes 3 notes and breaks 3 (≥3 notes: 2
+> and 3). Master's mapper already puts 101 of the eligible clean steps
+> exactly where the named voicing would, and only 15 move at all. The
+> earlier gain came from correcting the hand-position mapper's worse chord
+> placements. **Not integrated.** Pitch numbers are the same on both
+> images. `reposition.py` now also reports the ≥3-note rule (`btc3`).
+
 This is a measurement only; the pipeline is untouched. It follows up
 `experiment/chord-recognition`, where adding "inferred" chord notes lowered
 F1 but moving the detected notes into the named chord's voicing improved
@@ -25,6 +44,8 @@ notes:
 The voicing generator is the same one as on the chord-recognition branch.
 **oracle** does the same with the ground-truth chord name, as a ceiling on
 naming.
+
+The tables below are from the first run, on the hand-position image.
 
 **Scoring** uses the EGSet12 benchmark's matching. The script asserts that
 pitch recall and precision are identical to today's in every cell, and
