@@ -1,8 +1,19 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { API_BASE_URL, getJob, getJobAudioUrl, type JobStage, type JobStatusValue, type TabResult } from "@/app/lib/api";
+import {
+  API_BASE_URL,
+  getJob,
+  getJobAudioUrl,
+  setJobOverrides,
+  type BarOffsetBeats,
+  type JobStage,
+  type JobStatusValue,
+  type TabResult,
+  type TempoFactor,
+} from "@/app/lib/api";
 import DebugOverlay from "@/app/components/DebugOverlay";
+import SheetMusicView from "@/app/components/SheetMusicView";
 import TabViewer, { groupIntoSteps } from "@/app/components/TabViewer";
 import { readDebugParams, type DebugParams } from "@/app/lib/debug";
 
@@ -38,6 +49,9 @@ export default function JobStatus({ jobId }: JobStatusProps) {
   const [stage, setStage] = useState<JobStage | null>(null);
   const [result, setResult] = useState<TabResult | null>(null);
   const [playbackRate, setPlaybackRate] = useState<number>(1);
+  const [view, setView] = useState<"tab" | "sheet">("tab");
+  const [tempoFactor, setTempoFactor] = useState<TempoFactor>(1);
+  const [barOffsetBeats, setBarOffsetBeats] = useState<BarOffsetBeats>(0);
   const audioRef = useRef<HTMLAudioElement>(null);
   const [debug, setDebug] = useState<DebugParams>({ debug: false, job: null, src: "audio" });
   useEffect(() => setDebug(readDebugParams()), []);
@@ -70,6 +84,8 @@ export default function JobStatus({ jobId }: JobStatusProps) {
           clearInterval(intervalId);
           if (job.status === "done") {
             setResult(job.result);
+            setTempoFactor(job.tempo_factor);
+            setBarOffsetBeats(job.bar_offset_beats);
           }
         }
       } catch (err) {
@@ -87,6 +103,15 @@ export default function JobStatus({ jobId }: JobStatusProps) {
       clearInterval(intervalId);
     };
   }, [jobId]);
+
+  // Bar-line overrides: the backend recomputes the bars (and the MusicXML)
+  // from the stored transcription; the new result carries the new bars.
+  const applyOverrides = async (overrides: { tempo_factor?: TempoFactor; bar_offset_beats?: BarOffsetBeats }) => {
+    const job = await setJobOverrides(jobId, overrides);
+    setResult(job.result);
+    setTempoFactor(job.tempo_factor);
+    setBarOffsetBeats(job.bar_offset_beats);
+  };
 
   return (
     <div className="flex w-full flex-col gap-8">
@@ -121,7 +146,26 @@ export default function JobStatus({ jobId }: JobStatusProps) {
 
       {result && (
         <section className="flex flex-col gap-5 rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-          <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500">Tablature</h2>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500">
+              {view === "tab" ? "Tablature" : "Sheet music"}
+            </h2>
+            <div role="group" aria-label="View" className="inline-flex rounded-lg bg-slate-100 p-1 text-sm font-medium">
+              {(["tab", "sheet"] as const).map((v) => (
+                <button
+                  key={v}
+                  type="button"
+                  aria-pressed={view === v}
+                  onClick={() => setView(v)}
+                  className={`rounded-md px-3 py-1 transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-indigo-500 ${
+                    view === v ? "bg-white text-slate-900 shadow-sm" : "text-slate-600 hover:text-slate-900"
+                  }`}
+                >
+                  {v === "tab" ? "Tab" : "Sheet music"}
+                </button>
+              ))}
+            </div>
+          </div>
           <div className="flex flex-col gap-3">
             <audio
               ref={audioRef}
@@ -151,7 +195,19 @@ export default function JobStatus({ jobId }: JobStatusProps) {
               </div>
             </div>
           </div>
-          <TabViewer result={result} audioRef={audioRef} />
+          {view === "tab" ? (
+            <TabViewer result={result} audioRef={audioRef} />
+          ) : (
+            <SheetMusicView
+              jobId={jobId}
+              audioRef={audioRef}
+              bars={result.bars ?? []}
+              tempoFactor={tempoFactor}
+              barOffsetBeats={barOffsetBeats}
+              playbackRate={playbackRate}
+              onOverrides={applyOverrides}
+            />
+          )}
         </section>
       )}
       {result && debug.debug && <DebugOverlay audioRef={audioRef} stepTimes={stepTimes} />}

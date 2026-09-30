@@ -30,7 +30,9 @@ ENV NODE_ENV=production \
 # node:20-slim ships a non-root "node" user; no need to create one.
 COPY --from=builder --chown=node:node /app/.next/standalone ./
 COPY --from=builder --chown=node:node /app/.next/static ./.next/static
-# (No public/ directory in this project; copy it here too if one is added.)
+# public/ holds only the alphaTab browser files, written by `prebuild`
+# (scripts/copy-alphatab.mjs) in the builder stage.
+COPY --from=builder --chown=node:node /app/public ./public
 USER node
 EXPOSE 3000
 CMD ["node", "server.js"]

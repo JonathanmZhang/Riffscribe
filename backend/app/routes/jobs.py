@@ -128,11 +128,17 @@ def _status_response(raw: str) -> JobStatusResponse:
     # stage, stem_audio_path and the overrides aren't part of JobRecord, so
     # read them from the raw stored dict (as get_job_audio does).
     job_data = json.loads(raw)
+    result = job.result
+    if result is not None:
+        # Derived on every read, not stored, so it always matches the
+        # MusicXML export for the job's current overrides (older jobs too).
+        result = result.model_copy(update={"bars": rhythm.measure_starts(
+            job_data["result"], job_data.get("tempo_factor", 1.0), job_data.get("bar_offset_beats", 0))})
     return JobStatusResponse(
         job_id=job.job_id,
         status=job.status,
         error=job.error,
-        result=job.result,
+        result=result,
         isolate_guitar=job.isolate_guitar,
         stage=job_data.get("stage"),
         stem_available=_existing_file(job_data.get("stem_audio_path")) is not None,
@@ -151,10 +157,11 @@ async def get_job(job_id: str) -> JobStatusResponse:
 
 @router.patch("/{job_id}", response_model=JobStatusResponse)
 async def update_job_overrides(job_id: str, overrides: JobOverrides) -> JobStatusResponse:
-    """Sets the job's notation overrides and recomputes its bar lines from
-    the stored beats. Nothing is re-transcribed; the MusicXML export reads
-    the overrides on every request. Only for finished jobs, so this never
-    races the worker's writes to the same record."""
+    """Sets the job's notation overrides. Nothing is re-transcribed: the
+    response's result.bars and the MusicXML export are derived from the
+    stored notes and beats with the new overrides on every read. Only for
+    finished jobs, so this never races the worker's writes to the same
+    record."""
     raw = await redis_client.get(_job_key(job_id))
     if raw is None:
         raise HTTPException(status_code=404, detail="Job not found")
@@ -166,9 +173,6 @@ async def update_job_overrides(job_id: str, overrides: JobOverrides) -> JobStatu
         value = getattr(overrides, field)
         if value is not None:
             job_data[field] = value
-    result = job_data["result"]
-    result["bars"] = rhythm.bar_starts(result.get("beats") or [], result.get("downbeats") or [],
-                                       job_data.get("tempo_factor", 1.0), job_data.get("bar_offset_beats", 0))
     raw = json.dumps(job_data)
     await redis_client.set(_job_key(job_id), raw)
     return _status_response(raw)

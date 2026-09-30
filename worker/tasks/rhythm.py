@@ -295,6 +295,15 @@ def quantize_chords(chords: list[dict], grid: list[float]) -> list[dict]:
     return out
 
 
+def measure_starts(result: dict, tempo_factor: float = 1.0, bar_offset_beats: int = 0) -> list[float]:
+    """Start time (seconds) of every measure of the MusicXML export, in
+    order: the export's bar lines on the audio's time axis (the first can be
+    slightly negative, before the audio starts). The frontend uses them as
+    sync points so the sheet-music cursor follows the recording."""
+    score = notation(result, tempo_factor, bar_offset_beats)
+    return [round(slot_time(bar * SLOTS_PER_BAR, score["grid"]), 3) for bar in range(score["bars"])]
+
+
 def notation(result: dict, tempo_factor: float = 1.0, bar_offset_beats: int = 0,
              length_rule: str = "per_step", grouping: str = "slot") -> dict:
     """Everything the MusicXML export needs from a TabResult dict: the grid,

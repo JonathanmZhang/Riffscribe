@@ -34,3 +34,6 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# alphaTab browser files, copied from node_modules by scripts/copy-alphatab.mjs (prebuild)
+/public/alphatab/

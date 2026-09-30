@@ -44,3 +44,20 @@ tr[data-note-col].is-active {
   background-color: #fde68a; /* amber-200 */
   color: #0f172a;
 }
+
+/* Sheet-music playhead (SheetMusicView). alphaTab only creates these
+   elements; their look is up to the page. Same amber as the tab playhead. */
+.at-cursor-bar {
+  background-color: rgb(253 230 138 / 0.35); /* amber-200 */
+}
+.at-cursor-beat {
+  background-color: #d97706; /* amber-600 */
+  width: 3px;
+}
+.at-highlight * {
+  fill: #b45309; /* amber-700: the notes sounding now */
+  stroke: #b45309;
+}
+.at-selection div {
+  background-color: rgb(99 102 241 / 0.12); /* indigo-500 */
+}

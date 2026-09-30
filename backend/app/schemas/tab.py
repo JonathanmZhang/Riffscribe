@@ -28,7 +28,8 @@ class TabResult(BaseModel):
     # finished before beat tracking existed, or if it failed.
     beats: List[float] = []
     downbeats: List[float] = []
-    # Bar start times in seconds as notated (4/4: the beats in 4s, after the
-    # job's tempo_factor / bar_offset_beats; tasks/rhythm.py). Empty without
-    # beats.
+    # Start time (seconds) of each measure of the MusicXML export, for the
+    # job's current tempo_factor / bar_offset_beats (tasks/rhythm
+    # .measure_starts). Not stored: the backend derives it on every read.
+    # The first can be slightly negative (a bar starting before the audio).
     bars: List[float] = []

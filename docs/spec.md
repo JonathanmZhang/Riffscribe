@@ -68,9 +68,9 @@ bar_offset_beats (0-3, default 0).
 
 PATCH /jobs/{job_id} — JSON {tempo_factor?, bar_offset_beats?}; fields
 left out keep their value. Finished jobs only (409 otherwise); invalid
-values → 422. Stores the overrides and recomputes result.bars from the
-stored beats (tasks/rhythm.py); nothing is re-transcribed. Returns the
-same body as GET /jobs/{job_id}.
+values → 422. Stores the overrides; nothing is re-transcribed. Returns
+the same body as GET /jobs/{job_id}, whose result.bars reflects the new
+overrides.
 
 GET /jobs/{job_id}/musicxml — the finished tab as MusicXML 4.0
 (application/vnd.recordare.musicxml+xml, attachment
@@ -151,11 +151,15 @@ for jobs finished before chord names existed. TabViewer prints a name
 above the first column of each chord change. "beats" and "downbeats" are
 beat and bar-start times in seconds (downbeats a subset of beats); both
 are empty for jobs finished before beat tracking existed or when it
-failed. "bars" are the bar start times as notated: 4/4, the beats (kept
-at one metrical level, then halved/doubled by the job's tempo_factor) in
-4s, phased where most downbeats fall and moved by bar_offset_beats; empty
-without beats. The JSON's notes stay in raw seconds; quantization to 16ths
-happens only in the MusicXML export.
+failed. "bars" is the start time in seconds of each measure of the
+MusicXML export (tasks/rhythm.measure_starts): 4/4, the beats (kept at one
+metrical level, then halved/doubled by the job's tempo_factor) in 4s,
+phased where most downbeats fall and moved by bar_offset_beats, extended
+to cover every note (a constant grid at tempo_bpm without beats). It isn't
+stored: the backend derives it on every read, so it always matches the
+export for the current overrides. The sheet-music view uses it as
+alphaTab sync points. The JSON's notes stay in raw seconds; quantization
+to 16ths happens only in the MusicXML export.
 
 ### 3.7 Known Edge Cases
 

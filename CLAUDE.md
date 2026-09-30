@@ -19,8 +19,10 @@ condensed, enforceable rules Claude Code should follow every session.
   with {job_id, status: "queued"}
 - GET /jobs/{job_id} — returns {job_id, status, error, result}
 - PATCH /jobs/{job_id} — {tempo_factor?: 0.5|1|2, bar_offset_beats?:
-  0-3}, finished jobs only (409 otherwise); recomputes result.bars, never
-  re-transcribes. GET /jobs/{id} also returns both overrides.
+  0-3}, finished jobs only (409 otherwise); never re-transcribes. GET
+  /jobs/{id} also returns both overrides. result.bars = start time of each
+  MusicXML measure (rhythm.measure_starts), derived by the backend on
+  every read, never stored.
 - GET /jobs/{job_id}/musicxml — MusicXML 4.0 (notation + TAB, 4/4,
   quantized, chord symbols), built per request by the backend with the
   job's overrides. 404 unless done.
@@ -97,8 +99,9 @@ stays the fixed four-value enum.
   .additional_contexts) and builds the export per request. Keep numpy /
   Celery / worker imports out of them, and rebuild the BACKEND as well as
   the worker when they change. A deploy that builds backend/ alone needs
-  that context too. result.bars (map_fretboard, PATCH) comes from
-  rhythm.bar_starts. The TabResult notes stay in raw seconds; only the
+  that context too. result.bars comes from rhythm.measure_starts (backend,
+  on read); rhythm.bar_starts (bar lines within the beats only) is for
+  the measurements. The TabResult notes stay in raw seconds; only the
   export is quantized. Choices measured in experiments/rhythm/notation.py:
   per-step lengths (chords/fast: Basic Pitch length, other single notes:
   gap to the next note; beats both alone on clean/moderate, ties
@@ -150,6 +153,21 @@ stays the fixed four-value enum.
   runtime env — setting them as container environment does nothing.
   Changing one needs `docker compose up -d --build frontend` locally, or
   a redeploy on Vercel.
+- Sheet-music view (components/SheetMusicView.tsx, "Tab | Sheet music"
+  toggle in JobStatus): alphaTab 1.8.4 (@coderline/alphatab, MPL-2.0,
+  pinned exact) renders GET /jobs/{id}/musicxml. It's loaded as the UMD
+  script from public/alphatab/ (git-ignored), copied from node_modules by
+  scripts/copy-alphatab.mjs as `prebuild`/`predev` - NOT bundled: alphaTab
+  starts its worker/worklet from its own script URL, which Next's webpack
+  can't provide without alphaTab's webpack plugin. The Dockerfile copies
+  public/ into the runner. "Recording" playback = PlayerMode
+  .EnabledExternalMedia: a handler drives the page's <audio>, and each
+  measure is pinned to result.bars with score.applyFlatSyncPoints, so the
+  cursor follows the real (varying) tempo - verified bar-exact in the
+  browser. "Synth" = EnabledSynthesizer with the bundled SONiVOX sf2
+  (Apache-2.0). The cursor is only visible because globals.css styles
+  .at-cursor-bar / .at-cursor-beat / .at-highlight. With ?debug=1 the live
+  API is window.riffscribeSheet (for browser tests).
 - The frontend image is a production build (multi-stage Dockerfile, Next
   standalone output via next.config.mjs, `node server.js` as non-root),
   not `next dev`. The source was never volume-mounted, so there's no
