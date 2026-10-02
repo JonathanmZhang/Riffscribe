@@ -374,6 +374,22 @@ stays the fixed four-value enum.
   MusicXML bends, slides, wavy-line vibrato and <play><mute>palm</mute>;
   not hammer-ons/pull-offs or notehead-x dead notes, and "P.M." + dashes
   never ends.
+- Technique cleanup, measured and left OFF (branch
+  experiment/technique-cleanup, experiments/technique_cleanup/README.md):
+  tasks/techniques.py has a vibrato merge (a run of joined same-pitch
+  notes with a 4-8 Hz wobble becomes one note) and a glide merge (a note
+  the pitch glides into joins the note it left), applied by
+  transcribe.clean_notes when transcribe.VIBRATO_MERGE / GLIDE_MERGE are
+  set; note events now carry Basic Pitch's "bends". On IDMT the vibrato
+  merge removes 130 wrong notes for 3 right ones (split vibrato notes 55
+  -> 34%), but on EGSet12 it loses 2 real notes on clean and 5 on heavy
+  (a faintly wobbling sustained note swallowing re-struck notes of the
+  same pitch, performance 07). The glide merge removes 138 wrong notes on
+  IDMT but 44 right ones, costs EGSet12 7-11 real notes per tone (fast
+  passages -2.4 to -3.6 recall points) and worsens the synthetic chord
+  set. Rule was "no harm to EGSet12 or the regression check": neither
+  kept. Don't turn the glide merge on; the vibrato merge is a judgement
+  call, or needs a join-inside-the-wobble rule first.
 - On Windows/Git Bash specifically: `docker compose exec` container
   paths can get mangled by Git Bash's POSIX-path conversion — prefix
   with MSYS_NO_PATHCONV=1.
