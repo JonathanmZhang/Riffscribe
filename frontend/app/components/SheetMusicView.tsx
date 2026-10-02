@@ -50,6 +50,12 @@ const PLAYBACK_TONES: { value: PlaybackTone; label: string }[] = [
   { value: "acoustic", label: "Acoustic steel" },
 ];
 
+// alphaTab's synth at its default volume (1.0) exceeds full scale with the
+// bundled SoundFont: peaks of +1.0 to +5.9 dBFS on three transcriptions x
+// four tones, which clips at the sound card. 0.4 (-8 dB) leaves the highest
+// of those at -2.1 dBFS (experiments/expression/synth_level.py).
+const SYNTH_MASTER_VOLUME = 0.4;
+
 interface SheetMusicViewProps {
   jobId: string;
   audioRef: RefObject<HTMLAudioElement>;
@@ -135,7 +141,11 @@ export default function SheetMusicView({
         });
         api.renderFinished.on(() => setLoading(false));
         api.error.on((e) => setError(e.message ?? String(e)));
-        api.playerReady.on(() => setPlayerReady(true));
+        api.playerReady.on(() => {
+          // Synth only: with the recording, masterVolume is the <audio> volume.
+          if (api && playback === "synth") api.masterVolume = SYNTH_MASTER_VOLUME;
+          setPlayerReady(true);
+        });
         api.playerStateChanged.on((e) => setSynthPlaying(e.state === at.synth.PlayerState.Playing));
 
         if (playback === "recording") {

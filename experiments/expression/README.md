@@ -103,8 +103,15 @@ default already exceeds full scale on this passage's chords, FluidR3_GM
 would need the volume turned down a lot, and GeneralUser GS has headroom.
 This is from the exported audio; the live player's output wasn't measured.
 
+**Fixed since (`synth_level.py`):** the synth's master volume is now 0.4
+(-8 dB) in the sheet-music view. With the default font at volume 1.0,
+three transcriptions (EGSet12 12 and 06, and a 99 s full-band song) x four
+tones peaked between +1.0 and +5.9 dBFS; at 0.4 the highest is -2.1 dBFS.
+The live player reports the same volume. A denser song could still go
+higher; this is measured on those three.
+
 No judgement on which sounds better is given here: that is for listening.
-**Nothing is switched.**
+**The SoundFont is not switched.**
 
 ## 2. Techniques (measurement only)
 

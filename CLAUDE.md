@@ -204,7 +204,10 @@ stays the fixed four-value enum.
   25, verified in the browser). The SoundFont is unchanged: candidates
   were rendered for listening (experiments/expression/README.md), no
   decision yet - don't switch it without one. alphaSynth skips stereo-
-  linked samples, so FreePats' CC0 guitar fonts play silent in it. The cursor is only visible because globals.css styles
+  linked samples, so FreePats' CC0 guitar fonts play silent in it. The
+  synth's master volume is 0.4 (SYNTH_MASTER_VOLUME): at 1.0 the default
+  font peaks up to +5.9 dBFS and clips; re-measure with
+  experiments/expression/synth_level.py if the font changes. The cursor is only visible because globals.css styles
   .at-cursor-bar / .at-cursor-beat / .at-highlight. With ?debug=1 the live
   API is window.riffscribeSheet (for browser tests).
 - The frontend image is a production build (multi-stage Dockerfile, Next
