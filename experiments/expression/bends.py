@@ -273,6 +273,19 @@ DETECTORS = {
 }
 
 
+SHOWN = ["one right note", "right pitch, split in 2+", "right + another pitch", "another pitch only", "nothing"]
+
+
+def shown(shows: str) -> str:
+    """score_note's "shows" string as one of SHOWN."""
+    offsets = shows.split()
+    if not offsets:
+        return "nothing"
+    if all(o == "0" for o in offsets):
+        return SHOWN[0] if len(offsets) == 1 else SHOWN[1]
+    return SHOWN[2] if "0" in offsets else SHOWN[3]
+
+
 def report(rows: list[dict], label_key: str, sweep: bool) -> dict:
     """Prints the tables for rows (one per truth note, with "bend",
     "vibrato" and score_note's fields) and returns the headline numbers."""
@@ -289,6 +302,12 @@ def report(rows: list[dict], label_key: str, sweep: bool) -> dict:
               f"{sum(map(fired['vibrato, fine contour'], group)):>4} / "
               f"{sum(map(fired['vibrato, pitch_bends only'], group)):>4} | "
               + ", ".join(f"[{k}] x{v}" for k, v in shows))
+
+    print(f"  what the tab shows today, by {label_key}: " + " | ".join(SHOWN))
+    for label, group in sorted(groups.items()):
+        counts = Counter(shown(r["shows"]) for r in group)
+        print(f"    {label:<16} {len(group):>4} | " + " | ".join(
+            f"{counts[name]:>4} ({100 * counts[name] / len(group):3.0f}%)" for name in SHOWN))
 
     out = {}
     for name, (key, f) in DETECTORS.items():
