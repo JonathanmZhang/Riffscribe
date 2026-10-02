@@ -151,7 +151,12 @@ export async function setJobOverrides(
   return parseOrThrow<JobStatusResponse>(response);
 }
 
+// What the synth plays the sheet music with: sets the General MIDI program
+// in the MusicXML export (clean electric 28, overdriven 30, distorted 31,
+// acoustic steel 26). The notes are the same for every tone.
+export type PlaybackTone = "clean" | "overdriven" | "distorted" | "acoustic";
+
 // MusicXML download (notation + TAB), built with the job's current overrides.
-export function getJobMusicXmlUrl(jobId: string): string {
-  return `${API_BASE_URL}/jobs/${jobId}/musicxml`;
+export function getJobMusicXmlUrl(jobId: string, tone: PlaybackTone = "clean"): string {
+  return `${API_BASE_URL}/jobs/${jobId}/musicxml?tone=${tone}`;
 }

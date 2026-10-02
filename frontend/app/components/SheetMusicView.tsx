@@ -2,7 +2,7 @@
 
 import { type RefObject, useEffect, useRef, useState } from "react";
 import type * as AlphaTab from "@coderline/alphatab";
-import { getJobMusicXmlUrl, type BarOffsetBeats, type TempoFactor } from "@/app/lib/api";
+import { getJobMusicXmlUrl, type BarOffsetBeats, type PlaybackTone, type TempoFactor } from "@/app/lib/api";
 import { readDebugParams } from "@/app/lib/debug";
 
 // alphaTab (MPL-2.0) renders the job's MusicXML export: standard notation +
@@ -42,6 +42,14 @@ function loadAlphaTab(): Promise<typeof AlphaTab> {
 // it. "synth": alphaTab plays the notation itself with its SoundFont synth.
 export type SheetPlayback = "recording" | "synth";
 
+// Synth only: the General MIDI guitar the notation is played with.
+const PLAYBACK_TONES: { value: PlaybackTone; label: string }[] = [
+  { value: "clean", label: "Clean electric" },
+  { value: "overdriven", label: "Overdriven" },
+  { value: "distorted", label: "Distorted" },
+  { value: "acoustic", label: "Acoustic steel" },
+];
+
 interface SheetMusicViewProps {
   jobId: string;
   audioRef: RefObject<HTMLAudioElement>;
@@ -74,6 +82,7 @@ export default function SheetMusicView({
   const barsRef = useRef(bars);
   barsRef.current = bars;
   const [playback, setPlayback] = useState<SheetPlayback>("recording");
+  const [tone, setTone] = useState<PlaybackTone>("clean");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [playerReady, setPlayerReady] = useState(false);
@@ -204,16 +213,17 @@ export default function SheetMusicView({
     };
   }, [playback, audioRef]);
 
-  // (Re)load the score: on mount, on a playback-mode switch and after an
-  // override changes (bars differ). Nothing is re-transcribed; the backend
-  // rebuilds the MusicXML from the stored notes.
+  // (Re)load the score: on mount, on a playback-mode or tone switch and
+  // after an override changes (bars differ). Nothing is re-transcribed; the
+  // backend rebuilds the MusicXML from the stored notes. The tone is the
+  // export's MIDI program, which alphaTab's synth then plays.
   const barsKey = bars.join(",");
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
     setError(null);
     const load = async () => {
-      const response = await fetch(getJobMusicXmlUrl(jobId));
+      const response = await fetch(getJobMusicXmlUrl(jobId, tone));
       if (!response.ok) throw new Error(`MusicXML: ${response.status} ${response.statusText}`);
       const data = new Uint8Array(await response.arrayBuffer());
       // The API is created asynchronously (script load); wait for it.
@@ -226,7 +236,7 @@ export default function SheetMusicView({
     return () => {
       cancelled = true;
     };
-  }, [jobId, playback, barsKey]);
+  }, [jobId, playback, barsKey, tone]);
 
   useEffect(() => {
     if (apiRef.current && playback === "synth") apiRef.current.playbackSpeed = playbackRate;
@@ -272,6 +282,22 @@ export default function SheetMusicView({
             >
               {!playerReady ? "Loading sounds…" : synthPlaying ? "Pause" : "Play"}
             </button>
+          )}
+          {playback === "synth" && (
+            <label className="flex items-center gap-2">
+              <span className="text-slate-500">Tone</span>
+              <select
+                value={tone}
+                onChange={(event) => setTone(event.target.value as PlaybackTone)}
+                className="rounded-md border border-slate-200 bg-white px-2 py-1 text-sm font-medium text-slate-700 shadow-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-indigo-500"
+              >
+                {PLAYBACK_TONES.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
           )}
         </div>
         <div className="flex items-center gap-2">

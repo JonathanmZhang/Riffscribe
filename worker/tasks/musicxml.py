@@ -28,7 +28,16 @@ CHORD_KINDS = {"": "major", "m": "minor", "dim": "diminished", "aug": "augmented
                "m(maj7)": "major-minor", "dim7": "diminished-seventh", "m7b5": "half-diminished",
                "sus2": "suspended-second", "sus4": "suspended-fourth"}
 NOTATION_VOICE, TAB_VOICE = "1", "5"  # MuseScore's convention: voices 1-4 per staff
-GM_ELECTRIC_GUITAR_CLEAN = 28
+# Playback tones: the General MIDI program (1-128, as MusicXML's midi-program
+# counts; alphaTab and MIDI use this minus 1) and instrument name written
+# into the part. Only what a synth plays changes, never the notes.
+PLAYBACK_TONES = {
+    "clean": (28, "Electric Guitar"),
+    "overdriven": (30, "Overdriven Guitar"),
+    "distorted": (31, "Distortion Guitar"),
+    "acoustic": (26, "Acoustic Guitar (steel)"),
+}
+DEFAULT_TONE = "clean"
 DOCTYPE = ('<!DOCTYPE score-partwise PUBLIC "-//Recordare//DTD MusicXML 4.0 Partwise//EN" '
            '"http://www.musicxml.org/dtds/partwise.dtd">')
 
@@ -178,8 +187,9 @@ def _attributes(measure: ET.Element) -> None:
         _sub(tuning, "tuning-octave", octave)
 
 
-def build(score: dict, title: str) -> str:
-    """MusicXML text for a rhythm.notation() score."""
+def build(score: dict, title: str, tone: str = DEFAULT_TONE) -> str:
+    """MusicXML text for a rhythm.notation() score. tone: a PLAYBACK_TONES key."""
+    program, instrument_name = PLAYBACK_TONES[tone]
     root = ET.Element("score-partwise", version="4.0")
     work = _sub(root, "work")
     _sub(work, "work-title", title)
@@ -190,10 +200,10 @@ def build(score: dict, title: str) -> str:
     score_part = _sub(part_list, "score-part", id="P1")
     _sub(score_part, "part-name", "Guitar")
     instrument = _sub(score_part, "score-instrument", id="P1-I1")
-    _sub(instrument, "instrument-name", "Electric Guitar")
+    _sub(instrument, "instrument-name", instrument_name)
     midi = _sub(score_part, "midi-instrument", id="P1-I1")
     _sub(midi, "midi-channel", 1)
-    _sub(midi, "midi-program", GM_ELECTRIC_GUITAR_CLEAN)
+    _sub(midi, "midi-program", program)
     part = _sub(root, "part", id="P1")
 
     chords = {c["slot"]: c["name"] for c in score["chords"]}
@@ -227,6 +237,7 @@ def build(score: dict, title: str) -> str:
 
 
 def to_musicxml(result: dict, tempo_factor: float = 1.0, bar_offset_beats: int = 0,
-                title: str = "Riffscribe transcription") -> str:
-    """MusicXML text for a TabResult dict, with the job's overrides."""
-    return build(rhythm.notation(result, tempo_factor, bar_offset_beats), title)
+                title: str = "Riffscribe transcription", tone: str = DEFAULT_TONE) -> str:
+    """MusicXML text for a TabResult dict, with the job's overrides and the
+    playback tone (a PLAYBACK_TONES key)."""
+    return build(rhythm.notation(result, tempo_factor, bar_offset_beats), title, tone)

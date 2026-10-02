@@ -24,6 +24,10 @@ JobStage = Literal["ingesting", "separating", "transcribing", "mapping"]
 SeparationQuality = Literal["standard", "high"]
 Separator = Literal["demucs", "mega53"]
 
+# What a synth plays the MusicXML export with (tasks/musicxml.PLAYBACK_TONES):
+# the part's General MIDI program. A request option, not stored on the job.
+PlaybackTone = Literal["clean", "overdriven", "distorted", "acoustic"]
+
 # Job-level notation overrides (tasks/rhythm.TEMPO_FACTORS / BAR_OFFSETS).
 TempoFactor = Literal[0.5, 1.0, 2.0]
 BarOffset = Literal[0, 1, 2, 3]

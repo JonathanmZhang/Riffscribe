@@ -90,7 +90,11 @@ overrides.
 GET /jobs/{job_id}/musicxml — the finished tab as MusicXML 4.0
 (application/vnd.recordare.musicxml+xml, attachment
 riffscribe-<id>.musicxml): one guitar part, notation + TAB staves, 4/4,
-quantized starts and lengths, BTC chord symbols. Built on each request by
+quantized starts and lengths, BTC chord symbols. Optional query parameter
+tone = clean (default) | overdriven | distorted | acoustic: the part's
+General MIDI program (28 / 30 / 31 / 26) and instrument name, which is what
+a synth plays the file with; other values → 422. The sheet-music view's
+Tone selector uses it for alphaTab's synth. Built on each request by
 the backend (tasks/musicxml.py, shared from the worker) with the job's
 current overrides. 404 if the job is unknown or not done.
 

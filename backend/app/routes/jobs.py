@@ -8,7 +8,14 @@ from celery import Celery, chain, signature
 from fastapi import APIRouter, HTTPException, Request, status
 from fastapi.responses import FileResponse, Response
 
-from app.schemas.job import JobCreateResponse, JobOverrides, JobRecord, JobStatus, JobStatusResponse
+from app.schemas.job import (
+    JobCreateResponse,
+    JobOverrides,
+    JobRecord,
+    JobStatus,
+    JobStatusResponse,
+    PlaybackTone,
+)
 # Pure notation code shared with the worker (worker/tasks/rhythm.py and
 # musicxml.py, copied in by backend/Dockerfile from the "worker" context).
 from tasks import musicxml, rhythm
@@ -209,9 +216,11 @@ async def update_job_overrides(job_id: str, overrides: JobOverrides) -> JobStatu
 
 
 @router.get("/{job_id}/musicxml")
-async def get_job_musicxml(job_id: str) -> Response:
+async def get_job_musicxml(job_id: str, tone: PlaybackTone = musicxml.DEFAULT_TONE) -> Response:
     """The finished tab as MusicXML (notation + TAB staff, 4/4, quantized,
-    chord symbols), built on request with the job's current overrides."""
+    chord symbols), built on request with the job's current overrides.
+    tone sets the part's General MIDI program (what a synth plays it with);
+    the notes are the same for every tone."""
     raw = await redis_client.get(_job_key(job_id))
     if raw is None:
         raise HTTPException(status_code=404, detail="Job not found")
@@ -220,7 +229,7 @@ async def get_job_musicxml(job_id: str) -> Response:
         raise HTTPException(status_code=404, detail="MusicXML not available for this job yet")
 
     content = musicxml.to_musicxml(job_data["result"], job_data.get("tempo_factor", 1.0),
-                                   job_data.get("bar_offset_beats", 0))
+                                   job_data.get("bar_offset_beats", 0), tone=tone)
     return Response(
         content=content,
         media_type="application/vnd.recordare.musicxml+xml",

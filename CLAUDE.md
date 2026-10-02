@@ -34,7 +34,11 @@ condensed, enforceable rules Claude Code should follow every session.
   every read, never stored.
 - GET /jobs/{job_id}/musicxml — MusicXML 4.0 (notation + TAB, 4/4,
   quantized, chord symbols), built per request by the backend with the
-  job's overrides. 404 unless done.
+  job's overrides. 404 unless done. Optional ?tone=clean | overdriven |
+  distorted | acoustic (default clean; else 422) sets the part's General
+  MIDI program (28 / 30 / 31 / 26, 1-based as MusicXML counts) and
+  instrument name; the notes are identical for every tone, and it isn't
+  stored on the job.
 - GET /jobs/{job_id}/audio — returns FileResponse over the job's stored
   audio (normalized_audio_path), media_type audio/wav. 404 if the job or
   file doesn't exist. Range requests work out of the box via Starlette's
@@ -195,7 +199,12 @@ stays the fixed four-value enum.
   measure is pinned to result.bars with score.applyFlatSyncPoints, so the
   cursor follows the real (varying) tempo - verified bar-exact in the
   browser. "Synth" = EnabledSynthesizer with the bundled SONiVOX sf2
-  (Apache-2.0). The cursor is only visible because globals.css styles
+  (Apache-2.0). Its "Tone" selector reloads the export with ?tone=;
+  alphaTab takes the program from midi-program (minus 1: 27 / 29 / 30 /
+  25, verified in the browser). The SoundFont is unchanged: candidates
+  were rendered for listening (experiments/expression/README.md), no
+  decision yet - don't switch it without one. alphaSynth skips stereo-
+  linked samples, so FreePats' CC0 guitar fonts play silent in it. The cursor is only visible because globals.css styles
   .at-cursor-bar / .at-cursor-beat / .at-highlight. With ?debug=1 the live
   API is window.riffscribeSheet (for browser tests).
 - The frontend image is a production build (multi-stage Dockerfile, Next
