@@ -352,6 +352,25 @@ stays the fixed four-value enum.
   short), and even the true JAMS durations give 80%. Time to the next
   onset is better for single-note lines, worse for chords. Triplets are
   1.5% of EGSet12's GP onsets, so 16ths suffice there.
+- Techniques (bends, vibrato etc.), measured only (branch
+  feature/expression, experiments/expression/README.md): EGSet12 has NONE
+  - 0 bends/slides/hammer-ons/vibrato/palm mutes in its Guitar Pro files,
+  and its JAMS pitch_contour is the score's exact pitches - so never try
+  to score techniques on it. Real ground truth: IDMT-SMT-Guitar V2
+  dataset 2 (CC BY-NC-ND, local use only, data/_expression/idmt; 171
+  bends, 162 vibrato, 111 slides). Basic Pitch doesn't keep a bent note
+  as one note: pitch_bends only reach about -1..+3 thirds of a semitone
+  (an unbent note reads +1), then it starts a new note on the next
+  semitone. On IDMT a real bend is one right note only 9% of the time
+  (48% only the bent pitch, 28% an extra note), and vibrato splits 55% of
+  notes into same-fret repeats. Detecting bends from glides across note
+  joins: 95% recall / 100% precision on synthetic wheel bends but 27% /
+  42% on IDMT (slides look the same; 80% precision as "bend or slide");
+  vibrato 19% / 97%. The integer pitch_bends do as well as the contour
+  matrix. Synthetic bends are misleading - decide on IDMT. alphaTab draws
+  MusicXML bends, slides, wavy-line vibrato and <play><mute>palm</mute>;
+  not hammer-ons/pull-offs or notehead-x dead notes, and "P.M." + dashes
+  never ends.
 - On Windows/Git Bash specifically: `docker compose exec` container
   paths can get mangled by Git Bash's POSIX-path conversion — prefix
   with MSYS_NO_PATHCONV=1.
