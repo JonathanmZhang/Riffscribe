@@ -303,6 +303,8 @@ def map_notes_with_steps(notes: list[dict]) -> tuple[list[dict], list[list[dict]
                     "start_time": note["start_time"],
                     "end_time": note["end_time"],
                     "pitch": note["pitch"],
+                    # Set by transcribe's vibrato merge (tasks/techniques.py).
+                    **({"vibrato": True} if note.get("vibrato") else {}),
                 }
             )
 

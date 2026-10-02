@@ -374,22 +374,33 @@ stays the fixed four-value enum.
   MusicXML bends, slides, wavy-line vibrato and <play><mute>palm</mute>;
   not hammer-ons/pull-offs or notehead-x dead notes, and "P.M." + dashes
   never ends.
-- Technique cleanup, measured and left OFF (branch
-  experiment/technique-cleanup, experiments/technique_cleanup/README.md):
-  tasks/techniques.py has a vibrato merge (a run of joined same-pitch
-  notes with a 4-8 Hz wobble becomes one note) and a glide merge (a note
-  the pitch glides into joins the note it left), applied by
-  transcribe.clean_notes when transcribe.VIBRATO_MERGE / GLIDE_MERGE are
-  set; note events now carry Basic Pitch's "bends". On IDMT the vibrato
-  merge removes 130 wrong notes for 3 right ones (split vibrato notes 55
-  -> 34%), but on EGSet12 it loses 2 real notes on clean and 5 on heavy
-  (a faintly wobbling sustained note swallowing re-struck notes of the
-  same pitch, performance 07). The glide merge removes 138 wrong notes on
-  IDMT but 44 right ones, costs EGSet12 7-11 real notes per tone (fast
-  passages -2.4 to -3.6 recall points) and worsens the synthetic chord
-  set. Rule was "no harm to EGSet12 or the regression check": neither
-  kept. Don't turn the glide merge on; the vibrato merge is a judgement
-  call, or needs a join-inside-the-wobble rule first.
+- Vibrato merge (ON; tasks/techniques.py, transcribe.VIBRATO_MERGE = 1;
+  experiments/technique_cleanup/README.md): vibrato makes Basic Pitch
+  split one note into same-pitch pieces with no gap. After select_notes,
+  a run of such pieces whose pitch wobbles at 4-8 Hz (>= 12 cents, from
+  the per-note "bends" the events now carry) becomes one note with
+  "vibrato": true, which goes through the mapper into TabResult notes
+  and the MusicXML export (wavy-line on both staves; alphaTab draws it).
+  On IDMT: 130 wrong notes removed for 3 right ones, split vibrato notes
+  55 -> 34%. Cost on EGSet12 (no vibrato marked): 2 real notes lost on
+  clean (recall 71.9 -> 71.8), 0 on moderate, 5 on heavy, where a faintly
+  wobbling sustained note swallows re-struck notes of the same pitch
+  (performance 07). The "wobble" variant (VIBRATO_MERGE = 2: merge only
+  across a join with the wobble on both sides) loses 0 right notes on
+  IDMT and 1 / 0 / 1 on EGSet12, but removes only 80 wrong notes and
+  fully repairs 5 vibrato notes where the plain merge repairs 34; kept
+  as an option, not the default.
+- Tested and rejected: glide merge (transcribe.GLIDE_MERGE, same module
+  and README): joining a note the pitch glides into (bend or slide, 1-2
+  semitones, no gap) to the note it left. On IDMT it removes 138 wrong
+  notes but 44 right ones (36 on plain notes with no technique). On
+  EGSet12 it loses 11 / 9 / 7 real notes (clean / moderate / heavy):
+  recall 71.9 -> 71.2, 55.8 -> 55.2, 38.5 -> 38.1, fast passages 73.5 ->
+  69.9 and 71.1 -> 67.5. On the synthetic chord set the clean program's
+  recall falls 80.0 -> 76.8 and complete chords 40 -> 35%. It also does
+  nothing for the 48% of real bends where the tab has only the bent
+  pitch. Leave it off; don't retry by moving the 25-cent threshold (on
+  IDMT 15-40 cents changes bend recall by 1 point).
 - On Windows/Git Bash specifically: `docker compose exec` container
   paths can get mangled by Git Bash's POSIX-path conversion — prefix
   with MSYS_NO_PATHCONV=1.

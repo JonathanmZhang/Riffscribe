@@ -14,7 +14,8 @@ Two things go wrong with pitch movement (experiments/expression/README.md):
 
 merge_vibrato joins a run of same-pitch notes that follow each other
 without a gap when the run's pitch wobbles at 4-8 Hz (and marks the note
-"vibrato"). merge_glides joins a note into the one before it when the pitch
+"vibrato"); its "wobble" variant only joins across a join that lies inside
+the wobble. merge_glides joins a note into the one before it when the pitch
 is moving across the join; the result keeps the first note's pitch. Neither
 looks at how the note was plucked, so a glide can be a bend or a slide.
 """
@@ -38,6 +39,12 @@ GLIDE_FRAMES = 3
 VIBRATO_CENTS = 12.0
 VIBRATO_BAND_HZ = (4.0, 8.0)
 VIBRATO_ENERGY_SHARE = 0.5
+# "wobble" joins: within a run that has vibrato, two pieces are only merged
+# if the wobble is there on both sides of their join, looking this many
+# frames each way (0.5s). A side shorter than the minimum (0.3s, about two
+# cycles) can't show one, so the join is left alone.
+WOBBLE_FRAMES = 43
+WOBBLE_MIN_FRAMES = 26
 
 
 def offsets_cents(note: dict) -> np.ndarray:
@@ -124,15 +131,54 @@ def _absorb(first: dict, rest: list[dict], **extra) -> dict:
     return merged
 
 
-def merge_vibrato(notes: list[dict], threshold: float = VIBRATO_CENTS) -> list[dict]:
-    """Each run of joined same-pitch notes with vibrato becomes one note,
-    marked "vibrato". A single note with vibrato is only marked."""
+def wobble_cents(segment: np.ndarray) -> float:
+    """Amplitude in cents of the strongest 4-8 Hz component of a short,
+    already detrended stretch of pitch; 0 if it is too short to tell."""
+    x = np.asarray(segment, dtype=float)
+    if len(x) < WOBBLE_MIN_FRAMES:
+        return 0.0
+    window = np.hanning(len(x))
+    n = 8 * len(x)
+    spectrum = np.abs(np.fft.rfft(x * window, n))
+    freqs = np.fft.rfftfreq(n, 1 / FRAMES_PER_SECOND)
+    band = (freqs >= VIBRATO_BAND_HZ[0]) & (freqs <= VIBRATO_BAND_HZ[1])
+    return float(2 * spectrum[band].max() / window.sum())
+
+
+def _wobble_groups(run: list[dict], threshold: float) -> list[list[dict]]:
+    """The pieces of a run with vibrato, grouped across the joins that lie
+    inside the wobble. A piece struck again before the vibrato starts, or
+    after it has stopped, stays its own note."""
+    series = np.concatenate([offsets_cents(n) for n in run])
+    series = series - scipy.signal.medfilt(series, 21)
+    groups, frame = [[run[0]]], 0
+    for previous, note in zip(run, run[1:]):
+        frame += len(offsets_cents(previous))
+        before = series[max(0, frame - WOBBLE_FRAMES):frame]
+        after = series[frame:frame + WOBBLE_FRAMES]
+        if wobble_cents(before) >= threshold and wobble_cents(after) >= threshold:
+            groups[-1].append(note)
+        else:
+            groups.append([note])
+    return groups
+
+
+def merge_vibrato(notes: list[dict], joins: str = "run", threshold: float = VIBRATO_CENTS,
+                  wobble_threshold: float = VIBRATO_CENTS) -> list[dict]:
+    """A run of joined same-pitch notes with vibrato becomes one note,
+    marked "vibrato". joins="run": the whole run. joins="wobble": only
+    across the joins that lie inside the wobble (_wobble_groups). A single
+    note with vibrato is only marked."""
     out = []
     for run in same_pitch_runs(sorted(notes, key=lambda n: n["start_time"])):
-        if vibrato_cents(np.concatenate([offsets_cents(n) for n in run])) >= threshold:
-            out.append(_absorb(run[0], run[1:], vibrato=True))
-        else:
+        if vibrato_cents(np.concatenate([offsets_cents(n) for n in run])) < threshold:
             out.extend(run)
+            continue
+        for group in ([run] if joins == "run" else _wobble_groups(run, wobble_threshold)):
+            if len(group) > 1 or len(run) == 1 or vibrato_cents(offsets_cents(group[0])) >= threshold:
+                out.append(_absorb(group[0], group[1:], vibrato=True))
+            else:
+                out.append(group[0])
     return sorted(out, key=lambda n: (n["start_time"], n["midi"]))
 
 
@@ -159,12 +205,16 @@ def merge_glides(notes: list[dict], threshold: float = GLIDE_CENTS) -> list[dict
     return sorted(out, key=lambda n: (n["start_time"], n["midi"]))
 
 
-def cleanup(notes: list[dict], vibrato_merge: bool, glide_merge: bool) -> list[dict]:
+VIBRATO_JOINS = {1: "run", 2: "wobble"}
+
+
+def cleanup(notes: list[dict], vibrato_merge: int, glide_merge: bool) -> list[dict]:
     """The enabled merges, vibrato first (so a bend held with vibrato is one
-    note before its glide is looked at). Notes need "midi", times,
+    note before its glide is looked at). vibrato_merge: 0 off, 1 whole runs,
+    2 only across joins inside the wobble. Notes need "midi", times,
     "amplitude" and "bends"."""
     if vibrato_merge:
-        notes = merge_vibrato(notes)
+        notes = merge_vibrato(notes, VIBRATO_JOINS[int(vibrato_merge)])
     if glide_merge:
         notes = merge_glides(notes)
     return notes

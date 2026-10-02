@@ -30,9 +30,14 @@ BASIC_PITCH_ONSET_THRESHOLD = float(os.environ.get("BASIC_PITCH_ONSET_THRESHOLD"
 BASIC_PITCH_FRAME_THRESHOLD = float(os.environ.get("BASIC_PITCH_FRAME_THRESHOLD", "0.4"))
 BASIC_PITCH_MIN_NOTE_LENGTH_MS = float(os.environ.get("BASIC_PITCH_MIN_NOTE_LENGTH_MS", "80"))
 # Note cleanup from Basic Pitch's pitch offsets (tasks/techniques.py), after
-# select_notes: join a note that vibrato split into same-pitch pieces, and
-# join a note the pitch glides into (a bend or slide) to the one it left.
-VIBRATO_MERGE = False
+# select_notes. Measured in experiments/technique_cleanup/README.md.
+# VIBRATO_MERGE: a note that vibrato split into same-pitch pieces becomes one
+# note again, marked "vibrato". 0 off, 1 whole runs (on: -130 wrong notes on
+# IDMT for 3 right ones; 2 real notes lost on EGSet12 clean), 2 only across
+# joins inside the wobble (loses fewer real notes, repairs far less).
+# GLIDE_MERGE: a note the pitch glides into (bend or slide) joins the one it
+# left. Rejected: it loses real notes on plain playing. Keep it off.
+VIBRATO_MERGE = 1
 GLIDE_MERGE = False
 
 
@@ -116,7 +121,7 @@ def select_notes(
     ]
 
 
-def clean_notes(kept: list[dict], vibrato_merge: bool = VIBRATO_MERGE, glide_merge: bool = GLIDE_MERGE) -> list[dict]:
+def clean_notes(kept: list[dict], vibrato_merge: int = VIBRATO_MERGE, glide_merge: bool = GLIDE_MERGE) -> list[dict]:
     """The kept notes after the enabled technique merges (tasks/techniques
     .cleanup). Shared by extract_notes and the measurement scripts' stages."""
     return techniques.cleanup(kept, vibrato_merge, glide_merge)

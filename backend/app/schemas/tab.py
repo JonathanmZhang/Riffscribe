@@ -9,6 +9,9 @@ class Note(BaseModel):
     start_time: float
     end_time: float
     pitch: str
+    # Played with vibrato (detected by the worker's vibrato merge); drawn as
+    # a wavy line in the MusicXML export.
+    vibrato: bool = False
 
 
 class ChordSegment(BaseModel):

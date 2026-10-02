@@ -15,6 +15,9 @@ export interface Note {
   start_time: number;
   end_time: number;
   pitch: string;
+  // Played with vibrato; a wavy line in the sheet-music view. Missing on
+  // jobs finished before vibrato was detected.
+  vibrato?: boolean;
 }
 
 // A recognized chord over [start, end) seconds (BTC, in the worker).

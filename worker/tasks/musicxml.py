@@ -148,6 +148,15 @@ def _note(measure: ET.Element, ev: dict, voice: str, staff: int, note: dict | No
             technical = _sub(notations, "technical")
             _sub(technical, "string", note["string"])
             _sub(technical, "fret", note["fret"])
+    # Vibrato (the note's "vibrato" flag): a wavy line on both staves, on the
+    # note's first piece when it is tied over a bar line.
+    if note is not None and note.get("vibrato") and not ev["tie_stop"]:
+        notations = el.find("notations")
+        if notations is None:
+            notations = _sub(el, "notations")
+        ornaments = _sub(notations, "ornaments")
+        _sub(ornaments, "wavy-line", type="start", number=1)
+        _sub(ornaments, "wavy-line", type="stop", number=1)
 
 
 def _harmony(measure: ET.Element, name: str, offset: int) -> None:

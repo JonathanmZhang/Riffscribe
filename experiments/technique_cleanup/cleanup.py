@@ -4,6 +4,9 @@ real and labelled), without removing right notes where they don't (EGSet12,
 which has no vibrato or bends at all)?
 
   vibrato merge   a run of joined same-pitch notes with vibrato -> one note
+                  ("runs": the whole run; "wobble": only across the joins
+                  that lie inside the wobble, so a note struck again before
+                  the vibrato starts stays separate)
   glide merge     a note the pitch glides into -> part of the note it left
 
 Runs in the worker image (repo at /repo for the stale-image guard, this
@@ -46,8 +49,20 @@ from scripts.egset12_benchmark import BENCHMARK_JSON, TONES, _match, audio_path,
 from scripts.egset12_benchmark import evaluate as evaluate_egset12  # noqa: E402
 from tasks import techniques, transcribe  # noqa: E402
 
-CONFIGS = {"off": (False, False), "vibrato merge": (True, False), "glide merge": (False, True),
-           "both": (True, True)}
+# name -> the cleanup applied to the kept notes. "runs" merges a whole run
+# with vibrato; "wobble" only across joins that lie inside the wobble (at the
+# detector's 12 cents, and at lower thresholds to show the sensitivity).
+CONFIGS = {
+    "off": lambda kept: kept,
+    "vibrato, runs": lambda kept: techniques.cleanup(kept, 1, False),
+    "vibrato, wobble": lambda kept: techniques.cleanup(kept, 2, False),
+    "  wobble >= 9": lambda kept: techniques.merge_vibrato(kept, "wobble", wobble_threshold=9.0),
+    "  wobble >= 6": lambda kept: techniques.merge_vibrato(kept, "wobble", wobble_threshold=6.0),
+    "glide merge": lambda kept: techniques.cleanup(kept, 0, True),
+}
+# The same, as StageConfig settings, for the benchmark through the mapper.
+STAGES = {"off": (0, 0), "vibrato, runs": (1, 0), "vibrato, wobble": (2, 0), "glide merge": (0, 1)}
+VIBRATO_CONFIGS = [name for name in CONFIGS if "vibrato" in name or "wobble" in name]
 
 
 def kept_notes(output: dict, fine: bool) -> list[dict]:
@@ -87,7 +102,7 @@ def style_at(truths: list[dict], note: dict) -> str:
 
 def line(name: str, c: dict, base: dict | None = None) -> str:
     wrong = c["tab"] - c["right"]
-    text = (f"  {name:<14} tab notes {c['tab']:>5}  right {c['right']:>5}  wrong {wrong:>5}  "
+    text = (f"  {name:<16} tab notes {c['tab']:>5}  right {c['right']:>5}  wrong {wrong:>5}  "
             f"recall {100 * c['right'] / c['truth']:5.1f}%  precision {100 * c['right'] / c['tab']:5.1f}%")
     if base is not None:
         text += f"   | wrong notes {wrong - (base['tab'] - base['right']):+d}, right notes {c['right'] - base['right']:+d}"
@@ -109,8 +124,8 @@ def run_idmt(args) -> dict:
             kept = kept_notes(expression.model_output_for(wav), fine)
             truth = [{"onset": t["onset"], "midi": t["midi"]} for t in truths]
             _, right_before = score(truth, kept)
-            for name, (vibrato_merge, glide_merge) in CONFIGS.items():
-                cleaned = techniques.cleanup(kept, vibrato_merge, glide_merge)
+            for name, clean in CONFIGS.items():
+                cleaned = clean(kept)
                 counts, _ = score(truth, cleaned)
                 totals[name].update(counts)
                 by_dataset[name][dataset].update(counts)
@@ -144,14 +159,14 @@ def run_idmt(args) -> dict:
                   + ", ".join(f"{style}: -{c['extra note removed']} extra / -{c['real note lost']} real"
                               for style, c in sorted(audits[name].items())))
         print("  notes marked vibrato, by the style of the truth note they lie on:")
-        for name in ("vibrato merge", "both"):
+        for name in VIBRATO_CONFIGS:
             print(f"    {name}: " + ", ".join(f"{style}: {n}" for style, n in sorted(marked[name].items())))
         print("  dataset 2, what the tab shows per truth note: " + " | ".join(expression.SHOWN))
         for style in ("vibrato", "bend", "slide", "normal", "harmonic", "dead note"):
             for name in CONFIGS:
                 c = shown[name][style]
                 n = sum(c.values())
-                print(f"    {style:<10} {name:<14} {n:>5} | " + " | ".join(
+                print(f"    {style:<10} {name:<16} {n:>5} | " + " | ".join(
                     f"{c[label]:>4} ({100 * c[label] / n:3.0f}%)" for label in expression.SHOWN))
         results[source] = {name: dict(totals[name]) for name in CONFIGS}
         results[source + " audit"] = {name: {s: dict(c) for s, c in audits[name].items()} for name in CONFIGS}
@@ -165,8 +180,8 @@ def run_egset12(args) -> dict:
     results = {}
     print("\n== EGSet12 benchmark (run_stages + mapper): pitch recall / precision / position, per tone")
     base = None
-    for name, (vibrato_merge, glide_merge) in CONFIGS.items():
-        result = evaluate_egset12(StageConfig(vibrato_merge=int(vibrato_merge), glide_merge=int(glide_merge)))
+    for name, (vibrato_merge, glide_merge) in STAGES.items():
+        result = evaluate_egset12(StageConfig(vibrato_merge=vibrato_merge, glide_merge=glide_merge))
         results[name] = result
         base = base or result
         cells = []
@@ -175,9 +190,9 @@ def run_egset12(args) -> dict:
             cells.append(f"{tone} {100 * r['pitch_recall']:.1f} / {100 * r['pitch_precision']:.1f} / "
                          f"{100 * r['position_agreement']:.1f} (right {r['matched'] - b['matched']:+d}, "
                          f"tab notes {r['tab'] - b['tab']:+d})")
-        print(f"  {name:<14} " + "   ".join(cells))
+        print(f"  {name:<16} " + "   ".join(cells))
         for kind in ("chords", "single-note", "fast"):
-            print(f"  {'':<14} {kind:<12} " + "   ".join(
+            print(f"  {'':<16} {kind:<12} " + "   ".join(
                 f"{tone} {100 * result[tone][kind]['pitch_recall']:.1f} / {100 * result[tone][kind]['pitch_precision']:.1f}"
                 for tone in TONES))
 
@@ -191,8 +206,8 @@ def run_egset12(args) -> dict:
             truth = [{"onset": t["onset"], "midi": t["midi"]} for t in truth]
             kept = kept_notes(expression.model_output_for(audio_path(perf["performance"], tone)), False)
             _, right_before = score(truth, kept)
-            for name, (vibrato_merge, glide_merge) in CONFIGS.items():
-                cleaned = techniques.cleanup(kept, vibrato_merge, glide_merge)
+            for name, clean in CONFIGS.items():
+                cleaned = clean(kept)
                 remaining = {key(n) for n in cleaned}
                 for note in kept:
                     if key(note) not in remaining:
@@ -202,7 +217,7 @@ def run_egset12(args) -> dict:
         audit[tone] = {name: dict(c) for name, c in counts.items()}
         for name in list(CONFIGS)[1:]:
             c = counts[name]
-            print(f"  {tone:<9} {name:<14} of {c['notes']} kept notes: {c['real note lost']} real notes lost, "
+            print(f"  {tone:<9} {name:<16} of {c['notes']} kept notes: {c['real note lost']} real notes lost, "
                   f"{c['extra note removed']} wrong notes removed, {c['marked vibrato']} marked vibrato")
     results["audit"] = audit
     return results

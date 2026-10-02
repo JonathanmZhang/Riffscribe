@@ -114,6 +114,10 @@ Three chained tasks, not one monolithic task:
    logged and the job continues with librosa.beat.beat_track()'s tempo and
    empty beat lists. The tempo is an estimate: fast songs can come out at
    half tempo, and downbeats are only about half right.
+   Then the vibrato merge (tasks/techniques.py): a run of same-pitch
+   notes with no gap between them whose pitch wobbles at 4-8 Hz is one
+   note that vibrato split, so it becomes one note again, flagged
+   "vibrato". It uses Basic Pitch's per-note pitch offsets.
    Also names chords from the same audio with BTC (tasks/chords.py; large
    vocabulary, 12 roots x 14 qualities) and stores the timed segments as
    the internal chord_segments field. Chord names are display-only: if
@@ -168,7 +172,7 @@ combination (hand-shape realism is a stretch goal).
   "duration_seconds": 184.2,
   "tempo_bpm": 120,
   "notes": [
-    {"string": 5, "fret": 3, "start_time": 1.24, "end_time": 1.58, "pitch": "C4"}
+    {"string": 5, "fret": 3, "start_time": 1.24, "end_time": 1.58, "pitch": "C4", "vibrato": false}
   ],
   "chords": [
     {"start": 0.0, "end": 1.3, "name": "E"},
@@ -179,7 +183,10 @@ combination (hand-shape realism is a stretch goal).
   "bars": [0.012]
 }
 
-Time is stored in raw seconds, not beats/measures, for v1. "chords" are
+Time is stored in raw seconds, not beats/measures, for v1. A note's
+"vibrato" is true when the vibrato merge detected vibrato on it (false on
+jobs finished before it existed); the MusicXML export draws it as a wavy
+line. "chords" are
 BTC's segments with no-chord stretches left out and repeats merged;
 names are root + suffix ("", m, dim, aug, 6, m6, 7, m7, maj7, m(maj7),
 dim7, m7b5, sus2, sus4), roots spelled with sharps. It's an empty list

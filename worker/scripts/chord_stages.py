@@ -59,7 +59,8 @@ class StageConfig:
     bp_onset: float = transcribe.BASIC_PITCH_ONSET_THRESHOLD
     bp_frame: float = transcribe.BASIC_PITCH_FRAME_THRESHOLD
     bp_min_note_ms: float = transcribe.BASIC_PITCH_MIN_NOTE_LENGTH_MS
-    # Technique merges after selection (transcribe.clean_notes), 0 or 1.
+    # Technique merges after selection (transcribe.clean_notes). vibrato_merge:
+    # 0 off, 1 whole runs, 2 only across joins inside the wobble. glide_merge: 0 or 1.
     vibrato_merge: int = int(transcribe.VIBRATO_MERGE)
     glide_merge: int = int(transcribe.GLIDE_MERGE)
 
@@ -179,7 +180,7 @@ def run_stages(events: list[dict], config: StageConfig = PIPELINE, activations: 
         )
     selected = sorted(transcribe.select_notes(events, threshold=config.threshold, chord_floor=config.chord_floor),
                       key=lambda e: (e["start_time"], e["midi"]))
-    kept = transcribe.clean_notes([e for e in selected if e["kept"]], bool(config.vibrato_merge),
+    kept = transcribe.clean_notes([e for e in selected if e["kept"]], int(config.vibrato_merge),
                                   bool(config.glide_merge))
     # A note a merge absorbed is no longer in the tab: unkept in "events"
     # too, so the per-chord analysis counts it as lost after detection.

@@ -21,7 +21,7 @@ Transcription is slow (ML inference plus a search over fretboard positions), so 
 2. **Celery + Redis** (`worker/`) runs separate chained tasks. Tasks don't pass return values to each other: each one reads and writes shared job state in Redis by `job_id`. Each task sets `processing` and its pipeline `stage` when it starts. Any exception marks the job `failed` with an error message naming the stage, so a job never fails silently.
    - **`ingest_audio`** downloads URLs with yt-dlp, then normalizes every input to a mono, 22.05 kHz WAV with librosa.
    - **`separate_guitar`** runs only when the job was submitted with **Isolate guitar**. It separates the guitar from the original (full-rate, stereo) source, and the guitar stem is then transcribed instead of the full mix. There are two separators, chosen per job: **Standard** is Demucs' `htdemucs_6s` model on the CPU, and **High quality** is MVSep Mega 53 on an NVIDIA GPU. See [Guitar isolation quality](#guitar-isolation-quality). Separation needs a lot of memory, so it runs on its own `separation` queue, served one job at a time by a dedicated `worker-separation` service. It's also slow: Demucs took about 1–4 seconds per second of audio on an 8-core machine in testing.
-   - **`transcribe`** runs Spotify's [Basic Pitch](https://github.com/spotify/basic-pitch) for polyphonic pitch detection. Notes below the confidence threshold (0.5 by default) are discarded. It also estimates the tempo with librosa's beat tracker.
+   - **`transcribe`** runs Spotify's [Basic Pitch](https://github.com/spotify/basic-pitch) for polyphonic pitch detection. Notes below the confidence threshold (0.5 by default) are discarded. A note that vibrato split into several same-pitch pieces is joined back into one and flagged `vibrato`. It also estimates the tempo with librosa's beat tracker.
    - **`map_fretboard`** assigns every note a (string, fret) position. Notes whose onsets fall within 150 ms of each other are grouped into one chord. A Viterbi-style dynamic program then picks the lowest-cost path through all candidate positions for the whole piece, rather than choosing each note greedily. The cost of a move is fret-hand travel, plus a penalty for stretches wider than 4 frets and for staying on the same string, minus a bonus for open strings. When two paths tie, the one lower on the neck wins. Chords are voiced onto distinct strings.
 3. **Next.js** (`frontend/`) submits the job, polls its status, and renders the result two ways: a string-by-fret tab grid and a per-note detail table. Both highlight the notes sounding at the current playback position of an `<audio>` element that streams the job's normalized audio. Seeking works because the audio endpoint supports HTTP Range requests. For practice, playback can be slowed to 0.75x or 0.5x, and the highlighting stays in sync because it follows the audio's own playback position.
 
@@ -195,7 +195,7 @@ A finished `result` looks like this:
   "duration_seconds": 97.45,
   "tempo_bpm": 161,
   "notes": [
-    { "string": 1, "fret": 5, "start_time": 1.78, "end_time": 2.52, "pitch": "A4" }
+    { "string": 1, "fret": 5, "start_time": 1.78, "end_time": 2.52, "pitch": "A4", "vibrato": false }
   ]
 }
 ```
