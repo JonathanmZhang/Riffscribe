@@ -12,7 +12,7 @@ Transcription is slow (ML inference plus a search over fretboard positions), so 
      │                         │                        ▼
      └──GET /jobs/{id} (poll)──┘            Celery workers: chained tasks
         GET /jobs/{id}/audio                  1. ingest_audio
-        GET /jobs/{id}/stem                  (2. separate_guitar  (Demucs), optional)
+        GET /jobs/{id}/stem                  (2. separate_guitar  (Demucs or Mega 53), optional)
                                               3. transcribe     (Basic Pitch)
                                               4. map_fretboard  (DP search)
 ```
@@ -20,7 +20,7 @@ Transcription is slow (ML inference plus a search over fretboard positions), so 
 1. **FastAPI** (`backend/`) validates the upload or URL, creates a `job:{job_id}` record in Redis with status `queued`, enqueues the pipeline, and returns `202 Accepted` right away.
 2. **Celery + Redis** (`worker/`) runs separate chained tasks. Tasks don't pass return values to each other: each one reads and writes shared job state in Redis by `job_id`. Each task sets `processing` and its pipeline `stage` when it starts. Any exception marks the job `failed` with an error message naming the stage, so a job never fails silently.
    - **`ingest_audio`** downloads URLs with yt-dlp, then normalizes every input to a mono, 22.05 kHz WAV with librosa.
-   - **`separate_guitar`** runs only when the job was submitted with **Isolate guitar**. It separates the guitar from the original (full-rate, stereo) source with Demucs' `htdemucs_6s` model on the CPU, and the guitar stem is then transcribed instead of the full mix. Separation needs a lot of memory, so it runs on its own `separation` queue, served one job at a time by a dedicated `worker-separation` service. It's also slow: in testing it took about 2–4 seconds per second of audio on an 8-core machine.
+   - **`separate_guitar`** runs only when the job was submitted with **Isolate guitar**. It separates the guitar from the original (full-rate, stereo) source, and the guitar stem is then transcribed instead of the full mix. There are two separators, chosen per job: **Standard** is Demucs' `htdemucs_6s` model on the CPU, and **High quality** is MVSep Mega 53 on an NVIDIA GPU. See [Guitar isolation quality](#guitar-isolation-quality). Separation needs a lot of memory, so it runs on its own `separation` queue, served one job at a time by a dedicated `worker-separation` service. It's also slow: Demucs took about 1–4 seconds per second of audio on an 8-core machine in testing.
    - **`transcribe`** runs Spotify's [Basic Pitch](https://github.com/spotify/basic-pitch) for polyphonic pitch detection. Notes below the confidence threshold (0.5 by default) are discarded. It also estimates the tempo with librosa's beat tracker.
    - **`map_fretboard`** assigns every note a (string, fret) position. Notes whose onsets fall within 150 ms of each other are grouped into one chord. A Viterbi-style dynamic program then picks the lowest-cost path through all candidate positions for the whole piece, rather than choosing each note greedily. The cost of a move is fret-hand travel, plus a penalty for stretches wider than 4 frets and for staying on the same string, minus a bonus for open strings. When two paths tie, the one lower on the neck wins. Chords are voiced onto distinct strings.
 3. **Next.js** (`frontend/`) submits the job, polls its status, and renders the result two ways: a string-by-fret tab grid and a per-note detail table. Both highlight the notes sounding at the current playback position of an `<audio>` element that streams the job's normalized audio. Seeking works because the audio endpoint supports HTTP Range requests. For practice, playback can be slowed to 0.75x or 0.5x, and the highlighting stays in sync because it follows the audio's own playback position.
@@ -34,6 +34,7 @@ Everything runs in Docker. You don't need Python, Node.js or any ML libraries on
 - **[Docker Desktop](https://www.docker.com/products/docker-desktop/), installed and running.** On Linux, Docker Engine with the Compose plugin works too. Check that Docker is up with `docker compose version`, which should print a version and not an error.
 - **About 12 GB of free disk space.** The built images total about 6 GB, and the build needs working space on top of that. Nearly all of it is the worker image (5.3 GB): Basic Pitch depends on TensorFlow, and guitar separation adds PyTorch and the Demucs model. The two worker services share the same image.
 - **About 4 GB of memory available to Docker** if you use **Isolate guitar**. A separation peaked at about 2 GB in testing, on top of the other services.
+- **Optional: an NVIDIA GPU**, for the High quality setting of **Isolate guitar**. It needs about 3 GB of free GPU memory and about 8 GB more disk space. Everything else works without one. See [Guitar isolation quality](#guitar-isolation-quality).
 - **Ports 3000, 8000 and 6379 free.** 6379 is Redis, so stop any local Redis first.
 - **Git**, to clone the repo.
 
@@ -98,6 +99,60 @@ After that, try your own audio:
 
 Clean, solo guitar gives the best results. A short instrumental clip without drums or vocals is a good choice. In a full band mix, other instruments show up as extra notes. See [Known limitations](#known-limitations).
 
+### Guitar isolation quality
+
+**Isolate guitar** separates the guitar from the rest of the mix before transcribing. When it's ticked, the upload form offers two qualities:
+
+| | Standard | High quality |
+|---|---|---|
+| Separator | [Demucs](https://github.com/facebookresearch/demucs) `htdemucs_6s` | [MVSep Mega 53 Stems](https://github.com/ZFTurbo/Music-Source-Separation-Training/releases/tag/v1.0.21) (BS-RoFormer), its `guitar` stem |
+| Runs on | CPU, any computer | NVIDIA GPU only |
+| Started with | `docker compose up -d --build` | the same command with `-f docker-compose.yml -f docker-compose.gpu.yml` |
+| Time for a 102 s song (measured, see below) | about 2 minutes | about 3 minutes |
+| Memory | about 2 GB of RAM | about 2.9 GB of GPU memory |
+
+Both are limited to 120 seconds of audio (`MAX_SEPARATION_DURATION_SECONDS`).
+
+**Turning High quality on.** It needs an NVIDIA GPU, a current NVIDIA driver, and Docker's GPU support. Docker Desktop on Windows with the WSL 2 backend has that built in; on Linux, install the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html). Then start the stack with the GPU override file:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d --build
+```
+
+The override rebuilds only the `worker-separation` image, with PyTorch's CUDA build and the Mega 53 weights, and gives that service the GPU. This first build downloads about 4 GB more (the CUDA libraries, and a 1.37 GB checkpoint that is cut down to its two guitar stems during the build) and the image takes about 8 GB more disk space. The GPU settings are in a separate file because a GPU reservation stops the whole stack from starting on a computer without NVIDIA's Docker support.
+
+**Without a GPU.** The separation worker checks for a GPU when it starts and reports it at `GET /capabilities`. If High quality can't run, the form shows it disabled, with the reason. Standard still works.
+
+**If High quality fails during a job.** The job isn't failed. If Mega 53 runs out of GPU memory, is killed, or takes longer than `HQ_SEPARATION_TIMEOUT_SECONDS`, the guitar is separated with Demucs instead, and the job's status card and its `separation_note` say so.
+
+**Measured accuracy.** These numbers come from the full-mix benchmark on the `experiment/full-mix-benchmark` branch (`experiments/full_mix/README.md`). It mixes the 12 real guitar performances of [EGSet12](https://zenodo.org/records/11406378) with a backing band and scores the tab against EGSet12's note annotations: recall / precision / F1 of the notes, in percent, with the right pitch within 50 ms.
+
+| Mix | No separation | Standard (Demucs) | High quality (Mega 53) | The guitar alone, no band |
+|---|---|---|---|---|
+| Clean guitar, louder than the band | 62.5 / 43.7 / 51.4 | 57.8 / 70.1 / 63.4 | 69.8 / 82.2 / 75.5 | 71.9 / 85.2 / 78.0 |
+| Clean guitar, quieter than the band | 55.1 / 31.6 / 40.2 | 49.3 / 62.5 / 55.2 | 67.1 / 80.4 / 73.1 | 71.9 / 85.2 / 78.0 |
+| Distorted guitar, louder than the band | 51.2 / 40.5 / 45.2 | 48.7 / 67.0 / 56.4 | 59.5 / 79.7 / 68.1 | 55.8 / 80.7 / 66.0 |
+| Distorted guitar, quieter than the band | 47.5 / 29.5 / 36.4 | 43.1 / 58.5 / 49.7 | 58.9 / 79.2 / 67.5 | 55.8 / 80.7 / 66.0 |
+
+Read these with their limits in mind:
+
+- **The band is synthesized.** It is General MIDI drums, bass, pad, electric piano and a "voice oohs" stand-in for a singer, written to play in time and in key with each guitar performance. It is not a real band, and real recordings are probably harder for both separators. There is no ground truth yet for a real full mix.
+- The distorted tone is processed distortion applied to the clean recordings, not a real amplifier.
+- Because the band plays the guitar's own chord tones, a band note that leaks into the stem can count as a correct guitar note. The band alone, with no guitar, matches 9% of the guitar's notes this way. That is why the High quality figures on the distorted tone are slightly above the guitar alone. The effect applies to every column except the last.
+- The stem this pipeline produces was compared with the benchmark's stem for the same mix and is identical, sample for sample.
+
+**Measured time and memory**, on a laptop with a 4 GB NVIDIA GeForce GTX 1650 Max-Q and an 8-thread Intel i7-10510U, in Docker Desktop on Windows:
+
+| Job | Standard | High quality |
+|---|---|---|
+| A 102 s full-band song, whole job | 127 s | 183 s |
+| of which separation | 108 s | 164 s |
+| A 120 s song (the longest allowed), whole job | not measured | 222 s |
+| of which separation | not measured | 194 s |
+| Peak GPU memory on the 120 s song | none | 2,873 MiB of the card's 4,096 MiB |
+
+These are single runs on a warm stack. The first job after the stack starts is slower (323 s for the 102 s song at High quality). Demucs' speed varies a lot from run to run with other load on the computer. Mega 53 runs in its own process for each job, so the GPU memory is free again when the job's separation ends. Cards with less than 4 GB haven't been tried.
+
 ### Configuration
 
 You don't need to change anything to run locally: `docker-compose.yml` already sets these to the local values. They matter when you deploy the services separately. The frontend container serves a production build of the app, not a dev server.
@@ -117,6 +172,8 @@ You don't need to change anything to run locally: `docker-compose.yml` already s
 | `MAX_SEPARATION_DURATION_SECONDS` | worker, worker-separation | `120` | Longest audio accepted with **Isolate guitar**. Longer audio fails during ingest, within seconds and before any processing, with a clear message. |
 | `SEPARATION_SOFT_TIME_LIMIT_SECONDS` | worker-separation | `900` | Time limit for the separation task. The other tasks keep 120 s. |
 | `SEPARATION_TORCH_THREADS` | worker-separation | half the CPUs | CPU threads Demucs may use, so separation doesn't compete with the main worker for every core. |
+| `HQ_SEPARATION_HEAD` | worker-separation (`docker-compose.gpu.yml`) | `guitar` | Which Mega 53 stem is transcribed: `guitar` or `electric-guitar`. They scored the same on the benchmark. |
+| `HQ_SEPARATION_TIMEOUT_SECONDS` | worker-separation (`docker-compose.gpu.yml`) | `420` | A Mega 53 run longer than this is stopped, and the job falls back to Demucs. |
 
 The `NEXT_PUBLIC_*` values are built into the frontend at build time, so they're Docker build arguments rather than runtime environment variables. After changing one, rebuild with `docker compose up -d --build frontend`, or redeploy on a host such as Vercel.
 
@@ -124,8 +181,9 @@ The `NEXT_PUBLIC_*` values are built into the frontend at build time, so they're
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `POST` | `/jobs` | Submit a job. Send either `multipart/form-data` with a `file` field (`.mp3`/`.wav`/`.m4a`/`.mp4`/`.webm`/`.mov`, max 200 MB; video files are reduced to their audio track) or JSON `{"url": "..."}`. Add `isolate_guitar` to separate the guitar first: a form field set to `true`, `1` or `on`, or `"isolate_guitar": true` in the JSON. It defaults to off. Returns `202` with `{"job_id": "...", "status": "queued"}`. Invalid input returns `422`. |
-| `GET` | `/jobs/{job_id}` | Returns `{job_id, status, error, result, isolate_guitar, stage, stem_available}`. `status` is always one of `queued`, `processing`, `done` or `failed`. `stage` names the running step (`ingesting`, `separating`, `transcribing`, `mapping`). `stem_available` turns true once a guitar stem exists. `result` is filled in only when `done`, and `error` only when `failed`. Unknown IDs return `404`. |
+| `POST` | `/jobs` | Submit a job. Send either `multipart/form-data` with a `file` field (`.mp3`/`.wav`/`.m4a`/`.mp4`/`.webm`/`.mov`, max 200 MB; video files are reduced to their audio track) or JSON `{"url": "..."}`. Add `isolate_guitar` to separate the guitar first: a form field set to `true`, `1` or `on`, or `"isolate_guitar": true` in the JSON. It defaults to off. With it, `separation_quality` chooses the separator: `standard` (the default) or `high`. Returns `202` with `{"job_id": "...", "status": "queued"}`. Invalid input returns `422`. |
+| `GET` | `/jobs/{job_id}` | Returns `{job_id, status, error, result, isolate_guitar, stage, stem_available, separation_quality, separator, separation_note}`. `status` is always one of `queued`, `processing`, `done` or `failed`. `stage` names the running step (`ingesting`, `separating`, `transcribing`, `mapping`). `stem_available` turns true once a guitar stem exists. `separation_quality` is what was asked for, `separator` (`demucs` or `mega53`) is what produced the stem, and `separation_note` explains a fallback to Demucs. `result` is filled in only when `done`, and `error` only when `failed`. Unknown IDs return `404`. |
+| `GET` | `/capabilities` | Returns `{"separation": {high_quality_available, high_quality_unavailable_reason, gpu, gpu_memory_mib}}`: whether the separation worker found an NVIDIA GPU and the Mega 53 weights when it started. |
 | `GET` | `/jobs/{job_id}/audio` | Streams the job's normalized WAV (`audio/wav`) and supports Range requests for seeking. Returns `404` if the job doesn't exist or its audio hasn't been produced yet. |
 | `GET` | `/jobs/{job_id}/stem` | Streams the separated guitar stem (44.1 kHz stereo WAV), with Range support. Returns `404` unless the job ran with `isolate_guitar` and separation has finished. |
 
@@ -212,8 +270,12 @@ Riffscribe's own code is released under the [MIT license](LICENSE). Third-party 
 | soundfile | WAV I/O | BSD-3-Clause |
 | pretty_midi | MIDI note names | MIT |
 | NumPy, scikit-learn | numerics (librosa/Basic Pitch dependencies) | BSD-3-Clause |
-| [Demucs](https://github.com/facebookresearch/demucs) 4.0.1 and its `htdemucs_6s` weights | "Isolate guitar" separation | MIT |
-| PyTorch, torchaudio | runs Demucs | BSD-3-Clause |
+| [Demucs](https://github.com/facebookresearch/demucs) 4.0.1 (code) | "Isolate guitar", Standard quality | MIT |
+| Demucs `htdemucs_6s` weights | same | **Not MIT.** See [Separator weights](#separator-weights) |
+| [Music-Source-Separation-Training](https://github.com/ZFTurbo/Music-Source-Separation-Training) (code, pinned commit; only with `docker-compose.gpu.yml`) | "Isolate guitar", High quality | MIT |
+| MVSep Mega 53 Stems weights (only with `docker-compose.gpu.yml`) | same | **No license stated.** See [Separator weights](#separator-weights) |
+| PyTorch, torchaudio | runs Demucs, Mega 53, BTC and the beat tracker | BSD-3-Clause |
+| NVIDIA CUDA libraries (bundled in PyTorch's CUDA wheels; only with `docker-compose.gpu.yml`) | GPU inference for Mega 53 | NVIDIA's proprietary license terms |
 | yt-dlp | link ingestion | Unlicense |
 | FFmpeg (Debian package) | decoding video/compressed audio, run as a separate program | GPL (Debian builds with `--enable-gpl`) |
 | Celery | task queue | BSD-3-Clause |
@@ -225,6 +287,17 @@ Riffscribe's own code is released under the [MIT license](LICENSE). Third-party 
 | python-multipart | uploads | Apache-2.0 |
 | Next.js, React | frontend | MIT |
 | Tailwind CSS, TypeScript | frontend build | MIT / Apache-2.0 |
+
+### Separator weights
+
+The trained weights of both guitar separators are **not covered by this repository's MIT license, and this repository does not redistribute them**. Neither file is committed here. Each is downloaded from its publisher when you build the worker image on your own machine, and what you may do with it is governed by its publisher's terms, not by this repository's license.
+
+| Weights | Downloaded from | Stated terms |
+|---|---|---|
+| Demucs `htdemucs_6s` (Standard) | Meta's servers, by the `demucs` package, during the image build | The Demucs code is MIT, but its maintainer has said the weights are not: "The model weights are not covered by the MIT license, and are provided only for scientific purposes" ([demucs#327](https://github.com/facebookresearch/demucs/issues/327)). |
+| MVSep Mega 53 Stems (High quality) | The author's [v1.0.21 release](https://github.com/ZFTurbo/Music-Source-Separation-Training/releases/tag/v1.0.21) of Music-Source-Separation-Training, at a pinned URL with a pinned SHA-256 (`worker/Dockerfile`) | The repository's code is MIT. The weights are a release asset with no license statement of their own, and their training data isn't stated. Whether the repository's MIT license covers them hasn't been confirmed by the author. |
+
+This is a reading of the published terms, not legal advice. If you deploy Riffscribe publicly or use it commercially, check both before enabling **Isolate guitar**.
 
 **Evaluation tooling only (not used by the pipeline)**
 

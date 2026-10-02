@@ -1,9 +1,25 @@
 "use client";
 
-import { useState, type FormEvent } from "react";
-import { createJobFromFile, createJobFromUrl, URL_INGESTION_ENABLED } from "@/app/lib/api";
+import { useEffect, useState, type FormEvent } from "react";
+import {
+  createJobFromFile,
+  createJobFromUrl,
+  getSeparationCapabilities,
+  URL_INGESTION_ENABLED,
+  type SeparationCapabilities,
+  type SeparationQuality,
+} from "@/app/lib/api";
 
 type Mode = "file" | "url";
+
+const SEPARATION_QUALITIES: { value: SeparationQuality; label: string; description: string }[] = [
+  { value: "standard", label: "Standard", description: "Demucs. Works on any computer." },
+  {
+    value: "high",
+    label: "High quality",
+    description: "Mega 53. Needs an NVIDIA GPU; takes a few minutes per song.",
+  },
+];
 
 const README_LOCAL_SETUP_URL = "https://github.com/JonathanmZhang/Riffscribe#running-locally";
 
@@ -16,8 +32,33 @@ export default function UploadForm({ onJobCreated }: UploadFormProps) {
   const [file, setFile] = useState<File | null>(null);
   const [url, setUrl] = useState("");
   const [isolateGuitar, setIsolateGuitar] = useState(false);
+  const [quality, setQuality] = useState<SeparationQuality>("standard");
+  // null until the API answers; High quality stays disabled meanwhile.
+  const [capabilities, setCapabilities] = useState<SeparationCapabilities | null>(null);
+  const [capabilitiesError, setCapabilitiesError] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    getSeparationCapabilities()
+      .then((value) => !cancelled && setCapabilities(value))
+      .catch(() => !cancelled && setCapabilitiesError(true));
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const highQualityAvailable = capabilities?.high_quality_available ?? false;
+  const highQualityNote = highQualityAvailable
+    ? `Using ${capabilities?.gpu ?? "the GPU"}.`
+    : capabilities
+      ? `Not available: ${capabilities.high_quality_unavailable_reason ?? "no NVIDIA GPU was found"}.`
+      : capabilitiesError
+        ? "Not available: couldn't check for a GPU."
+        : "Checking for a GPU…";
+  // Never submit "high" while it's disabled.
+  const effectiveQuality: SeparationQuality = highQualityAvailable ? quality : "standard";
 
   const handleSubmit = async (event: FormEvent) => {
     event.preventDefault();
@@ -36,8 +77,8 @@ export default function UploadForm({ onJobCreated }: UploadFormProps) {
     try {
       const response =
         mode === "file"
-          ? await createJobFromFile(file as File, isolateGuitar)
-          : await createJobFromUrl(url.trim(), isolateGuitar);
+          ? await createJobFromFile(file as File, isolateGuitar, effectiveQuality)
+          : await createJobFromUrl(url.trim(), isolateGuitar, effectiveQuality);
       onJobCreated(response.job_id);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to submit job.");
@@ -126,6 +167,45 @@ export default function UploadForm({ onJobCreated }: UploadFormProps) {
           </span>
         </span>
       </label>
+
+      {isolateGuitar && (
+        <fieldset className="ml-[1.625rem] flex flex-col gap-2 text-sm">
+          <legend className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
+            Separation quality
+          </legend>
+          {SEPARATION_QUALITIES.map((option) => {
+            const disabled = option.value === "high" && !highQualityAvailable;
+            return (
+              <label
+                key={option.value}
+                className={`flex w-fit items-start gap-2.5 ${disabled ? "cursor-not-allowed" : "cursor-pointer"}`}
+              >
+                <input
+                  type="radio"
+                  name="separation-quality"
+                  value={option.value}
+                  checked={effectiveQuality === option.value}
+                  disabled={disabled}
+                  onChange={() => setQuality(option.value)}
+                  aria-describedby={`separation-quality-${option.value}`}
+                  className="mt-0.5 h-4 w-4 border-slate-300 accent-indigo-600"
+                />
+                <span id={`separation-quality-${option.value}`} className="flex flex-col">
+                  <span className={`font-medium ${disabled ? "text-slate-400" : "text-slate-800"}`}>
+                    {option.label}
+                  </span>
+                  <span className="text-xs text-slate-500">{option.description}</span>
+                  {option.value === "high" && (
+                    <span className={`text-xs ${highQualityAvailable ? "text-emerald-700" : "text-amber-700"}`}>
+                      {highQualityNote}
+                    </span>
+                  )}
+                </span>
+              </label>
+            );
+          })}
+        </fieldset>
+      )}
 
       {error && <p className="text-sm text-red-600">{error}</p>}
 

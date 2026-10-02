@@ -36,7 +36,8 @@ def _enqueue_pipeline(job_id: str, source: dict, isolate_guitar: bool) -> None:
     steps = [signature("ingest_audio", args=(job_id, source), app=celery_client, immutable=True)]
     if isolate_guitar:
         # Its own queue, served one job at a time by the worker-separation
-        # service (Demucs needs ~3GB RAM per run).
+        # service (Demucs needs ~3GB RAM per run). The task reads the job's
+        # separation_quality to pick the separator.
         steps.append(
             signature("separate_guitar", args=(job_id,), app=celery_client, immutable=True, queue="separation")
         )
@@ -52,6 +53,19 @@ def _job_key(job_id: str) -> str:
 
 
 TRUTHY_FORM_VALUES = {"true", "1", "on"}
+SEPARATION_QUALITIES = ("standard", "high")
+
+
+def _separation_quality(value, isolate_guitar: bool) -> str | None:
+    """The job's separation_quality from the request's value (form field or
+    JSON; missing = standard). None when the guitar isn't isolated. "high"
+    is accepted even where it can't run: the worker then falls back to
+    Demucs and says why in separation_note."""
+    if value is None or value == "":
+        value = "standard"
+    if value not in SEPARATION_QUALITIES:
+        raise HTTPException(status_code=422, detail=f"'separation_quality' must be one of {list(SEPARATION_QUALITIES)}")
+    return value if isolate_guitar else None
 
 
 def _existing_file(path: str | None) -> str | None:
@@ -97,6 +111,11 @@ async def create_job(request: Request) -> JobCreateResponse:
         source = {"type": "file", "path": saved_path}
         # Checkbox-style form field: "true"/"1"/"on" (any case) enable it.
         isolate_guitar = str(form.get("isolate_guitar", "")).strip().lower() in TRUTHY_FORM_VALUES
+        try:
+            separation_quality = _separation_quality(form.get("separation_quality"), isolate_guitar)
+        except HTTPException:
+            shutil.rmtree(job_dir, ignore_errors=True)
+            raise
 
     elif content_type.startswith("application/json"):
         body = await request.json()
@@ -108,6 +127,7 @@ async def create_job(request: Request) -> JobCreateResponse:
         isolate_guitar = body.get("isolate_guitar", False)
         if not isinstance(isolate_guitar, bool):
             raise HTTPException(status_code=422, detail="'isolate_guitar' must be a boolean")
+        separation_quality = _separation_quality(body.get("separation_quality"), isolate_guitar)
 
     else:
         raise HTTPException(
@@ -115,7 +135,14 @@ async def create_job(request: Request) -> JobCreateResponse:
             detail="Content-Type must be multipart/form-data (file upload) or application/json ({'url': ...})",
         )
 
-    job = JobRecord(job_id=job_id, status=JobStatus.queued, error=None, result=None, isolate_guitar=isolate_guitar)
+    job = JobRecord(
+        job_id=job_id,
+        status=JobStatus.queued,
+        error=None,
+        result=None,
+        isolate_guitar=isolate_guitar,
+        separation_quality=separation_quality,
+    )
     await redis_client.set(_job_key(job_id), job.model_dump_json())
 
     _enqueue_pipeline(job_id, source, isolate_guitar)
@@ -125,7 +152,7 @@ async def create_job(request: Request) -> JobCreateResponse:
 
 def _status_response(raw: str) -> JobStatusResponse:
     job = JobRecord.model_validate_json(raw)
-    # stage, stem_audio_path and the overrides aren't part of JobRecord, so
+    # stage, stem_audio_path, separator and the overrides aren't part of JobRecord, so
     # read them from the raw stored dict (as get_job_audio does).
     job_data = json.loads(raw)
     result = job.result
@@ -142,6 +169,9 @@ def _status_response(raw: str) -> JobStatusResponse:
         isolate_guitar=job.isolate_guitar,
         stage=job_data.get("stage"),
         stem_available=_existing_file(job_data.get("stem_audio_path")) is not None,
+        separation_quality=job.separation_quality,
+        separator=job_data.get("separator"),
+        separation_note=job_data.get("separation_note"),
         tempo_factor=job_data.get("tempo_factor", 1.0),
         bar_offset_beats=job_data.get("bar_offset_beats", 0),
     )

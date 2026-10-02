@@ -1,5 +1,8 @@
-"""Optional guitar source separation (Demucs htdemucs_6s), run between
-ingest_audio and transcribe when a job has isolate_guitar set.
+"""Optional guitar source separation, run between ingest_audio and transcribe
+when a job has isolate_guitar set. Two separators, chosen per job by its
+separation_quality: "standard" = Demucs htdemucs_6s on the CPU (below),
+"high" = Mega 53 on an NVIDIA GPU (tasks/mega53.py). If Mega 53 can't run or
+fails, the job falls back to Demucs and says so in separation_note.
 
 Uses Demucs' Python API directly rather than the demucs CLI, and does file
 I/O with librosa/soundfile rather than torchaudio: Demucs 4.0.1 reads and
@@ -15,13 +18,16 @@ import librosa
 import numpy as np
 import soundfile as sf
 import torch
+from celery.exceptions import SoftTimeLimitExceeded
+from celery.signals import celeryd_after_setup
 from demucs.apply import apply_model
 from demucs.pretrained import get_model
 
+from tasks import mega53
 from tasks.audio_io import job_dir, normalize_to_wav
 from tasks.celery_app import app
 from tasks.separation_limits import separation_duration_error
-from tasks.storage import get_job, update_job
+from tasks.storage import get_job, get_separation_capabilities, set_separation_capabilities, update_job
 
 logger = logging.getLogger(__name__)
 
@@ -34,8 +40,12 @@ DEMUCS_SHIFTS = int(os.environ.get("DEMUCS_SHIFTS", "1"))
 # its own, tighter duration cap (tasks/separation_limits.py, also checked
 # early by ingest_audio) and a longer time limit than the 120s tasks.
 SEPARATION_SOFT_TIME_LIMIT_SECONDS = int(os.environ.get("SEPARATION_SOFT_TIME_LIMIT_SECONDS", "900"))
+# Longest a Mega 53 run may take before the job falls back to Demucs. Under
+# the soft time limit above, so Demucs still has time to run after it.
+HQ_SEPARATION_TIMEOUT_SECONDS = float(os.environ.get("HQ_SEPARATION_TIMEOUT_SECONDS", "420"))
 
 GUITAR_SOURCE = "guitar"
+SEPARATION_QUEUE = "separation"
 
 # Intra-op threads for Demucs inference, so separation doesn't compete with
 # the main worker's TensorFlow for every core. Default: half the CPUs
@@ -97,6 +107,54 @@ def separate_guitar_stem(input_path: str) -> tuple[np.ndarray, int]:
     return np.clip(stem, -1.0, 1.0), model.samplerate
 
 
+@celeryd_after_setup.connect
+def _report_capabilities(sender, instance, **kwargs):
+    """At worker start: records whether this worker can run high-quality
+    separation (a GPU and the Mega 53 weights), for GET /capabilities. Only
+    the worker serving the separation queue reports. Never stops the start."""
+    try:
+        if SEPARATION_QUEUE not in instance.app.amqp.queues.consume_from:
+            return
+        capabilities = mega53.probe_in_subprocess()
+        set_separation_capabilities(capabilities)
+        logger.info(
+            "separation worker %s: high-quality separation %s",
+            sender,
+            f"available on {capabilities['gpu']} ({capabilities['gpu_memory_mib']} MiB)"
+            if capabilities["available"]
+            else f"unavailable: {capabilities['reason']}",
+        )
+    except Exception:
+        logger.exception("could not report separation capabilities")
+
+
+def _separate_high_quality(job_id: str, source_path: str, stem_path: str) -> str | None:
+    """Writes the Mega 53 stem to stem_path. Returns None on success, or the
+    reason it wasn't used (the caller then falls back to Demucs)."""
+    capabilities = get_separation_capabilities()
+    if not capabilities.get("available"):
+        return capabilities.get("reason") or "the separation worker has not reported a GPU"
+    try:
+        info = mega53.separate_to_file(source_path, stem_path, HQ_SEPARATION_TIMEOUT_SECONDS)
+    except mega53.HqSeparationError as exc:
+        return str(exc)
+    logger.info(
+        "separate_guitar: job %s Mega 53 (%s head) separated %.1fs of audio in %.1fs (real-time factor "
+        "%.2f, model load %.1fs) on %s, peak GPU memory %d MiB allocated / %d MiB reserved",
+        job_id,
+        info["head"],
+        info["audio_seconds"],
+        info["seconds"],
+        info["seconds"] / info["audio_seconds"] if info["audio_seconds"] else 0.0,
+        info["load_seconds"],
+        info["gpu"],
+        info["peak_vram_allocated_mib"],
+        info["peak_vram_reserved_mib"],
+    )
+    update_job(job_id, separation_peak_vram_mib=info["peak_vram_reserved_mib"])
+    return None
+
+
 @app.task(name="separate_guitar", soft_time_limit=SEPARATION_SOFT_TIME_LIMIT_SECONDS)
 def separate_guitar(job_id: str) -> str:
     try:
@@ -114,41 +172,67 @@ def separate_guitar(job_id: str) -> str:
         if too_long:
             raise ValueError(too_long)
 
-        load_start = time.perf_counter()
-        _load_model(DEMUCS_MODEL)
-        load_seconds = time.perf_counter() - load_start
-
-        # Runs on the original source (e.g. 44.1/48kHz stereo), not
-        # normalized.wav: htdemucs_6s is trained on 44.1kHz stereo.
-        start = time.perf_counter()
-        stem, sample_rate = separate_guitar_stem(source_path)
-        separation_seconds = time.perf_counter() - start
-
         directory = job_dir(job_id)
         stem_path = os.path.join(directory, "guitar_stem.wav")
-        sf.write(stem_path, stem.T, sample_rate, subtype="PCM_16")
+        # Both separators run on the original source (e.g. 44.1/48kHz
+        # stereo), not normalized.wav: they are trained on 44.1kHz stereo.
+        start = time.perf_counter()
+
+        separator, note = "demucs", None
+        if job.get("separation_quality") == "high":
+            try:
+                reason = _separate_high_quality(job_id, source_path, stem_path)
+            except SoftTimeLimitExceeded:
+                raise
+            except Exception as exc:  # the optional separator never fails the job
+                logger.exception("separate_guitar: job %s Mega 53 failed unexpectedly", job_id)
+                reason = f"an unexpected error ({exc})"
+            if reason is None:
+                separator = "mega53"
+            else:
+                note = (
+                    f"High-quality separation was not used: {reason}. "
+                    "Standard separation (Demucs) was used instead."
+                )
+                logger.warning("separate_guitar: job %s falling back to Demucs: %s", job_id, reason)
+
+        if separator == "demucs":
+            load_start = time.perf_counter()
+            _load_model(DEMUCS_MODEL)
+            load_seconds = time.perf_counter() - load_start
+
+            demucs_start = time.perf_counter()
+            stem, sample_rate = separate_guitar_stem(source_path)
+            demucs_seconds = time.perf_counter() - demucs_start
+            sf.write(stem_path, stem.T, sample_rate, subtype="PCM_16")
+
+            audio_seconds = stem.shape[1] / sample_rate
+            logger.info(
+                "separate_guitar: job %s separated %.1fs of audio in %.1fs (real-time factor %.2f, "
+                "model %s, shifts %d, torch threads %d, model load %.1fs)",
+                job_id,
+                audio_seconds,
+                demucs_seconds,
+                demucs_seconds / audio_seconds if audio_seconds else 0.0,
+                DEMUCS_MODEL,
+                DEMUCS_SHIFTS,
+                torch.get_num_threads(),
+                load_seconds,
+            )
+
+        # Everything this step spent separating: for "high", Mega 53's whole
+        # process (model load included), plus Demucs after a fallback.
+        separation_seconds = time.perf_counter() - start
         # Same conversion ingest applies, so Basic Pitch gets its usual format.
         transcription_path = normalize_to_wav(stem_path, os.path.join(directory, "guitar_stem_normalized.wav"))
-
-        audio_seconds = stem.shape[1] / sample_rate
-        logger.info(
-            "separate_guitar: job %s separated %.1fs of audio in %.1fs (real-time factor %.2f, "
-            "model %s, shifts %d, torch threads %d, model load %.1fs)",
-            job_id,
-            audio_seconds,
-            separation_seconds,
-            separation_seconds / audio_seconds if audio_seconds else 0.0,
-            DEMUCS_MODEL,
-            DEMUCS_SHIFTS,
-            torch.get_num_threads(),
-            load_seconds,
-        )
 
         update_job(
             job_id,
             stem_audio_path=stem_path,
             transcription_audio_path=transcription_path,
             separation_seconds=round(separation_seconds, 2),
+            separator=separator,
+            separation_note=note,
         )
     except Exception as exc:
         logger.exception("separate_guitar failed for job %s", job_id)

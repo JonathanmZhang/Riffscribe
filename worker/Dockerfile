@@ -1,3 +1,23 @@
+# High-quality separation weights (MVSep Mega 53 Stems, tasks/mega53.py),
+# downloaded only when HQ_SEPARATION=1 (docker-compose.gpu.yml). Its own
+# stage, so the 1.37 GB release checkpoint is cached apart from the code
+# and never lands in the final image: the worker stage below mounts it and
+# keeps a two-head checkpoint. The files are release assets of
+# ZFTurbo/Music-Source-Separation-Training v1.0.21, pinned by URL and
+# SHA-256. They are not covered by this repo's MIT license (README).
+FROM python:3.11-slim AS mega53-weights
+ARG HQ_SEPARATION=0
+ARG MEGA53_CKPT_URL=https://github.com/ZFTurbo/Music-Source-Separation-Training/releases/download/v1.0.21/mvsep_mega_model_bs_roformer_53_stems_v1.ckpt
+ARG MEGA53_CKPT_SHA256=c62820893bbf86d4e734f966bd142d9157cfc8bb8e79e9d8f9ea553f3ff3519f
+ARG MEGA53_CONFIG_URL=https://github.com/ZFTurbo/Music-Source-Separation-Training/releases/download/v1.0.21/mvsep_mega_model_bs_roformer_53_stems.yaml
+ARG MEGA53_CONFIG_SHA256=7e198062a251587088adb91215a4f44ab59e67bd62fcc805cf54d6e7dfc51103
+RUN mkdir /mega53 && if [ "$HQ_SEPARATION" = "1" ]; then \
+        python -c "import sys, urllib.request as u; u.urlretrieve(sys.argv[1], '/mega53/full.ckpt'); u.urlretrieve(sys.argv[2], '/mega53/config.yaml')" \
+            "$MEGA53_CKPT_URL" "$MEGA53_CONFIG_URL" \
+        && echo "$MEGA53_CKPT_SHA256  /mega53/full.ckpt" | sha256sum -c - \
+        && echo "$MEGA53_CONFIG_SHA256  /mega53/config.yaml" | sha256sum -c - ; \
+    fi
+
 FROM python:3.11-slim
 WORKDIR /app
 RUN apt-get update && apt-get install -y ffmpeg && rm -rf /var/lib/apt/lists/*
@@ -48,6 +68,38 @@ RUN apt-get update && apt-get install -y --no-install-recommends git \
 COPY requirements-beats.txt .
 RUN pip install --no-cache-dir -r requirements-beats.txt \
     && python -c "from beat_this.inference import File2Beats; File2Beats(checkpoint_path='final0', device='cpu', dbn=False)"
+
+# High-quality separation (tasks/mega53.py), only with HQ_SEPARATION=1: the
+# worker-separation image of docker-compose.gpu.yml. With the default 0
+# these layers do nothing, and the image is the CPU one above. They come
+# after the shared layers so both images reuse those.
+# 1. PyTorch's CUDA 12.1 wheels in place of the CPU ones, same version
+#    (uninstall first: pip treats the CPU wheel as satisfying torch==2.5.1).
+#    The wheels bundle the CUDA runtime; the host needs only an NVIDIA
+#    driver and Docker's GPU support.
+ARG HQ_SEPARATION=0
+RUN if [ "$HQ_SEPARATION" = "1" ]; then \
+        pip uninstall -y torch torchaudio \
+        && pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cu121 \
+            torch==2.5.1 torchaudio==2.5.1 ; \
+    fi
+# 2. MSST (MIT), the model code and chunked inference, at a pinned commit.
+ARG MSST_SHA=84b1eac0887756b4f1a9d7a1ff49105939749ed2
+COPY requirements-separation-hq.txt .
+RUN if [ "$HQ_SEPARATION" = "1" ]; then \
+        pip install --no-cache-dir -r requirements-separation-hq.txt \
+        && apt-get update && apt-get install -y --no-install-recommends git \
+        && git clone https://github.com/ZFTurbo/Music-Source-Separation-Training /opt/msst \
+        && git -C /opt/msst checkout $MSST_SHA && rm -rf /opt/msst/.git \
+        && apt-get purge -y git && apt-get autoremove -y && rm -rf /var/lib/apt/lists/* ; \
+    fi
+# 3. The two-head checkpoint, cut from the downloaded one (mounted from the
+#    stage above, not copied).
+COPY tasks/mega53.py /tmp/mega53.py
+RUN --mount=type=bind,from=mega53-weights,source=/mega53,target=/mnt/mega53 \
+    if [ "$HQ_SEPARATION" = "1" ]; then \
+        python /tmp/mega53.py strip /mnt/mega53/full.ckpt /mnt/mega53/config.yaml /app/models/mega53 ; \
+    fi
 
 COPY tasks/ ./tasks/
 COPY scripts/ ./scripts/

@@ -3,7 +3,7 @@ import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.routes import jobs
+from app.routes import capabilities, jobs
 
 # Explicit allowlist of frontend origins, comma-separated. A wildcard is
 # refused rather than silently opening the API to every origin.
@@ -25,6 +25,7 @@ app.add_middleware(
 )
 
 app.include_router(jobs.router)
+app.include_router(capabilities.router)
 
 
 @app.get("/health")

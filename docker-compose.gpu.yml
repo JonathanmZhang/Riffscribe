@@ -1,0 +1,28 @@
+# High-quality guitar separation (Mega 53) on an NVIDIA GPU. An override,
+# not part of docker-compose.yml, because a GPU reservation stops the whole
+# stack from starting on a computer without NVIDIA's Docker support:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d --build
+#
+# Only worker-separation changes: its image gets PyTorch's CUDA build, MSST
+# and the Mega 53 weights (worker/Dockerfile, HQ_SEPARATION=1), and it gets
+# the GPU. The main worker keeps the CPU image. Without this file,
+# "High quality" is disabled in the UI and Standard (Demucs) still works.
+services:
+  worker-separation:
+    build:
+      args:
+        - HQ_SEPARATION=1
+    environment:
+      # Mega 53 stem to transcribe: guitar | electric-guitar.
+      - HQ_SEPARATION_HEAD=guitar
+      # Longest a Mega 53 run may take before the job falls back to Demucs;
+      # it has to leave Demucs time within SEPARATION_SOFT_TIME_LIMIT_SECONDS.
+      - HQ_SEPARATION_TIMEOUT_SECONDS=420
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]

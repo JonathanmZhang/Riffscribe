@@ -54,6 +54,12 @@ export interface JobCreateResponse {
 // done, and left at the failing stage when a job fails.
 export type JobStage = "ingesting" | "separating" | "transcribing" | "mapping";
 
+// Guitar separation, for "Isolate guitar" jobs. Quality is what was asked
+// for: "standard" = Demucs (CPU), "high" = Mega 53 (NVIDIA GPU). Separator
+// is what produced the stem; it differs from the quality after a fallback.
+export type SeparationQuality = "standard" | "high";
+export type Separator = "demucs" | "mega53";
+
 export interface JobStatusResponse {
   job_id: string;
   status: JobStatusValue;
@@ -62,6 +68,10 @@ export interface JobStatusResponse {
   isolate_guitar: boolean;
   stage: JobStage | null;
   stem_available: boolean;
+  separation_quality: SeparationQuality | null;
+  separator: Separator | null;
+  // Why a "high" job was separated with Demucs; null otherwise.
+  separation_note: string | null;
   tempo_factor: TempoFactor;
   bar_offset_beats: BarOffsetBeats;
 }
@@ -74,10 +84,28 @@ async function parseOrThrow<T>(response: Response): Promise<T> {
   return response.json();
 }
 
-export async function createJobFromFile(file: File, isolateGuitar: boolean): Promise<JobCreateResponse> {
+// What the separation worker reported at its start (GET /capabilities).
+export interface SeparationCapabilities {
+  high_quality_available: boolean;
+  high_quality_unavailable_reason: string | null;
+  gpu: string | null;
+  gpu_memory_mib: number | null;
+}
+
+export async function getSeparationCapabilities(): Promise<SeparationCapabilities> {
+  const response = await fetch(`${API_BASE_URL}/capabilities`);
+  return (await parseOrThrow<{ separation: SeparationCapabilities }>(response)).separation;
+}
+
+export async function createJobFromFile(
+  file: File,
+  isolateGuitar: boolean,
+  separationQuality: SeparationQuality,
+): Promise<JobCreateResponse> {
   const formData = new FormData();
   formData.append("file", file);
   formData.append("isolate_guitar", String(isolateGuitar));
+  formData.append("separation_quality", separationQuality);
 
   const response = await fetch(`${API_BASE_URL}/jobs`, {
     method: "POST",
@@ -87,11 +115,15 @@ export async function createJobFromFile(file: File, isolateGuitar: boolean): Pro
   return parseOrThrow<JobCreateResponse>(response);
 }
 
-export async function createJobFromUrl(url: string, isolateGuitar: boolean): Promise<JobCreateResponse> {
+export async function createJobFromUrl(
+  url: string,
+  isolateGuitar: boolean,
+  separationQuality: SeparationQuality,
+): Promise<JobCreateResponse> {
   const response = await fetch(`${API_BASE_URL}/jobs`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ url, isolate_guitar: isolateGuitar }),
+    body: JSON.stringify({ url, isolate_guitar: isolateGuitar, separation_quality: separationQuality }),
   });
 
   return parseOrThrow<JobCreateResponse>(response);

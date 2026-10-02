@@ -1,0 +1,6 @@
+# High-quality guitar separation (Mega 53, tasks/mega53.py): what MSST's
+# BS-RoFormer needs on top of the packages already in the image (torch,
+# einops, rotary-embedding-torch, PyYAML, packaging, tqdm). Installed only in
+# images built with HQ_SEPARATION=1 (docker-compose.gpu.yml).
+beartype==0.14.1
+ml_collections==0.1.1

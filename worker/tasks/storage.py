@@ -22,3 +22,17 @@ def update_job(job_id: str, **fields) -> None:
     job["job_id"] = job_id
     job.update(fields)
     redis_client.set(_job_key(job_id), json.dumps(job))
+
+
+# What the separation worker can do (written once at its start by
+# tasks/separate.py, read by the backend's GET /capabilities).
+SEPARATION_CAPABILITIES_KEY = "separation:capabilities"
+
+
+def get_separation_capabilities() -> dict:
+    raw = redis_client.get(SEPARATION_CAPABILITIES_KEY)
+    return json.loads(raw) if raw else {}
+
+
+def set_separation_capabilities(capabilities: dict) -> None:
+    redis_client.set(SEPARATION_CAPABILITIES_KEY, json.dumps(capabilities))

@@ -9,6 +9,7 @@ import {
   type BarOffsetBeats,
   type JobStage,
   type JobStatusValue,
+  type Separator,
   type TabResult,
   type TempoFactor,
 } from "@/app/lib/api";
@@ -38,6 +39,11 @@ const STAGE_LABELS: Record<JobStage, string> = {
   mapping: "Mapping to fretboard…",
 };
 
+const SEPARATOR_LABELS: Record<Separator, string> = {
+  demucs: "Guitar isolated with Demucs (standard quality).",
+  mega53: "Guitar isolated with Mega 53 (high quality).",
+};
+
 interface JobStatusProps {
   jobId: string;
 }
@@ -47,6 +53,8 @@ export default function JobStatus({ jobId }: JobStatusProps) {
   const [jobError, setJobError] = useState<string | null>(null);
   const [pollError, setPollError] = useState<string | null>(null);
   const [stage, setStage] = useState<JobStage | null>(null);
+  const [separator, setSeparator] = useState<Separator | null>(null);
+  const [separationNote, setSeparationNote] = useState<string | null>(null);
   const [result, setResult] = useState<TabResult | null>(null);
   const [playbackRate, setPlaybackRate] = useState<number>(1);
   const [view, setView] = useState<"tab" | "sheet">("tab");
@@ -78,6 +86,8 @@ export default function JobStatus({ jobId }: JobStatusProps) {
 
         setStatus(job.status);
         setStage(job.stage);
+        setSeparator(job.separator);
+        setSeparationNote(job.separation_note);
         setJobError(job.error);
 
         if (TERMINAL_STATUSES.includes(job.status)) {
@@ -138,6 +148,12 @@ export default function JobStatus({ jobId }: JobStatusProps) {
         <p className="text-sm text-slate-500">
           Job <code className="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-xs text-slate-700">{jobId}</code>
         </p>
+        {separator && <p className="text-sm text-slate-600">{SEPARATOR_LABELS[separator]}</p>}
+        {separationNote && (
+          <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+            {separationNote}
+          </p>
+        )}
         {status === "failed" && jobError && (
           <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{jobError}</p>
         )}

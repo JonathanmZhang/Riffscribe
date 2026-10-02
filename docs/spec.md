@@ -57,14 +57,29 @@ Audio sync via native <audio> element + requestAnimationFrame polling.
 POST /jobs — multipart (file: UploadFile, max 200MB, .mp3/.wav/.m4a or
 video .mp4/.webm/.mov — ingest_audio extracts the audio track with ffmpeg)
 OR JSON ({"url": "..."}). Returns 202: {job_id, status: "queued"}.
-Validation errors → 422.
+Validation errors → 422. Optional in both forms: isolate_guitar (form
+"true"/"1"/"on", or a JSON boolean; default off) and, with it,
+separation_quality: "standard" (default; Demucs) or "high" (Mega 53, needs
+an NVIDIA GPU). Any other value → 422. "high" is accepted even where it
+can't run: the job is then separated with Demucs (see 3.4).
+
+GET /capabilities — Returns 200: {separation: {high_quality_available,
+high_quality_unavailable_reason, gpu, gpu_memory_mib}}, as reported by the
+separation worker when it started (Redis key separation:capabilities).
+Unavailable, with a reason, when the worker has no NVIDIA GPU, was built
+without Mega 53, or hasn't started. The upload form uses it to enable or
+disable "High quality".
 
 GET /jobs/{job_id} — Returns 200:
 {job_id, status: "queued"|"processing"|"done"|"failed", error, result}.
 result only populated when status is "done". Unknown job_id → 404.
 Status is a FIXED enum — never a fifth value. Also returns the job's
 notation overrides, tempo_factor (0.5 | 1 | 2, default 1) and
-bar_offset_beats (0-3, default 0).
+bar_offset_beats (0-3, default 0), and for isolate_guitar jobs:
+separation_quality (what was asked for), separator ("demucs" | "mega53",
+what produced the stem, set once it exists) and separation_note (why a
+"high" job was separated with Demucs; null otherwise). These are fields
+of the job, not of result.
 
 PATCH /jobs/{job_id} — JSON {tempo_factor?, bar_offset_beats?}; fields
 left out keep their value. Finished jobs only (409 otherwise); invalid
@@ -105,6 +120,23 @@ Three chained tasks, not one monolithic task:
 
 Each task sets status: "processing" at start, catches exceptions to set
 status: "failed" with a clear error message. soft_time_limit: 120s per task.
+
+Optional separate_guitar(job_id), between 1 and 2, only for isolate_guitar
+jobs, on the "separation" queue (worker-separation service, concurrency 1,
+soft_time_limit 900s). It writes the guitar stem that transcribe then
+reads. The separator follows the job's separation_quality:
+- "standard": Demucs htdemucs_6s on the CPU, in the worker process.
+- "high": MVSep Mega 53 Stems (BS-RoFormer) on an NVIDIA GPU
+  (tasks/mega53.py), with only its two guitar heads loaded and the release's
+  inference settings (fp32, 20s chunks, 2 overlaps). It runs in a
+  subprocess per job, so GPU memory is freed afterwards and a crash can't
+  take the worker down. If it can't run or fails (no GPU, out of GPU
+  memory, killed, over HQ_SEPARATION_TIMEOUT_SECONDS), the task separates
+  with Demucs instead and sets separation_note; the job doesn't fail.
+Both are capped at MAX_SEPARATION_DURATION_SECONDS of audio. Mega 53 exists
+only in the worker-separation image built by docker-compose.gpu.yml
+(HQ_SEPARATION=1), which also reserves the GPU; the default stack has
+neither, so it starts on any computer.
 
 ### 3.5 Fretboard Mapping Algorithm
 
@@ -226,6 +258,18 @@ SEPARATION_SOFT_TIME_LIMIT_SECONDS=900     # separate_guitar's soft time
   limit (the other tasks keep 120s)
 SEPARATION_TORCH_THREADS=                  # torch intra-op threads for
   Demucs; empty/unset = half the container's CPUs
+
+# High-quality separation (Mega 53). Read by worker-separation and set in
+# docker-compose.gpu.yml, the override that enables it:
+HQ_SEPARATION_HEAD=guitar                  # which Mega 53 stem is
+  transcribed: guitar | electric-guitar
+HQ_SEPARATION_TIMEOUT_SECONDS=420          # a Mega 53 run longer than this is
+  stopped and the job falls back to Demucs; keep it far enough under
+  SEPARATION_SOFT_TIME_LIMIT_SECONDS for Demucs to finish
+# Build arg of worker/Dockerfile, not an environment variable:
+HQ_SEPARATION=0                            # 1 (docker-compose.gpu.yml, for
+  worker-separation only) adds PyTorch's CUDA 12.1 build, MSST and the
+  Mega 53 weights, downloaded from a pinned URL with a pinned SHA-256
 
 ## 4. Current Build Status
 

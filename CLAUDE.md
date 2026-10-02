@@ -16,8 +16,17 @@ condensed, enforceable rules Claude Code should follow every session.
 
 ## API contract (fixed — see docs/spec.md 3.3 for full detail)
 - POST /jobs — accepts file upload OR {"url": "..."} JSON, returns 202
-  with {job_id, status: "queued"}
-- GET /jobs/{job_id} — returns {job_id, status, error, result}
+  with {job_id, status: "queued"}. Optional isolate_guitar and, with it,
+  separation_quality: "standard" (default, Demucs) | "high" (Mega 53);
+  other values 422. "high" is accepted even where it can't run (the
+  worker falls back).
+- GET /jobs/{job_id} — returns {job_id, status, error, result}, plus for
+  isolate_guitar jobs separation_quality (asked for), separator ("demucs"
+  | "mega53", what made the stem) and separation_note (why a "high" job
+  used Demucs). These are job fields, never part of result.
+- GET /capabilities — {separation: {high_quality_available,
+  high_quality_unavailable_reason, gpu, gpu_memory_mib}}, from the Redis
+  key separation:capabilities that worker-separation writes at its start.
 - PATCH /jobs/{job_id} — {tempo_factor?: 0.5|1|2, bar_offset_beats?:
   0-3}, finished jobs only (409 otherwise); never re-transcribes. GET
   /jobs/{id} also returns both overrides. result.bars = start time of each
@@ -53,6 +62,23 @@ celery_app task_routes), served by the worker-separation compose service
 at --concurrency 1. The main worker serves only the default "celery"
 queue at --concurrency 2. Keep separation off the main worker.
 
+separate_guitar picks the separator from the job's separation_quality:
+"standard" = Demucs on the CPU, in the task's process; "high" = MVSep
+Mega 53 (tasks/mega53.py) on an NVIDIA GPU. Mega 53 exists only in the
+worker-separation image built with docker-compose.gpu.yml
+(HQ_SEPARATION=1: CUDA 12.1 torch 2.5.1 swapped in, MSST at /opt/msst,
+weights from a pinned URL + SHA-256, cut at build time to the two guitar
+heads, ~100 MB). The GPU reservation is in that override, not in
+docker-compose.yml, so the default stack starts without NVIDIA. If
+Mega 53 can't run or fails (no GPU, OOM, killed, over
+HQ_SEPARATION_TIMEOUT_SECONDS), the task separates with Demucs and sets
+separation_note - it must never fail the job. Mega 53 runs in a
+subprocess per job (`python -m tasks.mega53 separate`): MSST's top-level
+`utils`/`models` would clash with BTC's, the GPU memory is freed on exit,
+and a kill is catchable. Don't move it into the Celery process, and don't
+initialize CUDA in the worker's parent process (the GPU probe at start is
+a subprocess too).
+
 Each task sets a `stage` field at start (ingesting | separating |
 transcribing | mapping); map_fretboard clears it on done, and a failed
 job keeps the stage it failed in. `stage` is NOT a status value — status
@@ -71,12 +97,14 @@ stays the fixed four-value enum.
 - Internal intermediate pipeline data (e.g. raw_note_events) stays out
   of the public TabResult schema. Other internal job fields:
   source_audio_path / source_duration_seconds (ingest), stem_audio_path /
-  transcription_audio_path / separation_seconds (separate_guitar),
+  transcription_audio_path / separation_seconds (the whole separation
+  step) / separation_peak_vram_mib (separate_guitar),
   chord_segments (transcribe; copied into TabResult.chords by
   map_fretboard).
   transcribe reads transcription_audio_path if set, else
   normalized_audio_path. The API exposes only stage, isolate_guitar and
-  stem_available (plus GET /jobs/{id}/stem), read from the raw dict.
+  stem_available (plus GET /jobs/{id}/stem), separation_quality, separator
+  and separation_note, read from the raw dict.
 - Chord names: tasks/chords.py runs BTC (MIT; cloned into the image at
   /opt/btc, pinned commit, sed-patched for removed numpy aliases) in
   transcribe on the same audio as Basic Pitch. Display-only: a failure
@@ -119,7 +147,9 @@ stays the fixed four-value enum.
 - Worker code is NOT volume-mounted: tasks/ and scripts/ are both
   COPY'd into the image, so ANY change under worker/ needs a rebuild
   (docker compose up -d --build worker worker-separation — both services
-  use the same image). Only ./data is mounted for the pipeline; the
+  use the same image; with the GPU stack add -f docker-compose.yml -f
+  docker-compose.gpu.yml to EVERY compose command, or worker-separation
+  is rebuilt as the CPU image under the same tag). Only ./data is mounted for the pipeline; the
   repo is also mounted read-only at /repo, used only by the stale-image
   guard below.
 - Stale-image guard: the worker image records the commit and a hash of
@@ -214,6 +244,21 @@ stays the fixed four-value enum.
   DEMUCS_SHIFTS>=1 applies a random shift, so the stem, and therefore
   the note count, varies slightly between runs of the same file (the
   pipeline doesn't seed it; scripts/ab_separation.py --seed does).
+- Mega 53 (high-quality separation), measured on a 4 GB GTX 1650 Max-Q
+  (branch feature/hq-separation): the pipeline's stem is bit-identical
+  to the full-mix benchmark's GPU stem (two-head checkpoint, torch 2.5.1
+  cu121, rotary-embedding-torch 0.9.1 from beat_this), so that
+  benchmark's accuracy numbers apply. Real-time factor ~1.4 on a
+  102-120s song (2.3-2.5 on 23s clips: demix pads 10s each side); a 120s
+  song is 194s of separation, 222s for the job; peak GPU memory 2.8 GiB
+  reserved by PyTorch, 2,873 MiB on the card. It is deterministic (same
+  note count every run), unlike Demucs. Under Docker Desktop/WSL2 the
+  NVIDIA driver spills into shared system memory when the card is full,
+  so a real CUDA out-of-memory doesn't happen there (with 3.3 GB held by
+  another process a run still finished); the timeout is what bounds that
+  case. On torch < 2.6 MSST's attention needs attend._HAS_SDPA_KERNEL =
+  False (mega53._build_model). Neither separator's weights are under the
+  repo's MIT license (README "Separator weights"); never commit them.
 - Chord accuracy (measured with scripts/eval_chords.py and
   scripts/regression_check.py: synthetic GM chord set + 3 fixed firefire
   windows + the tab_sample clip, which has a real known tab). The biggest

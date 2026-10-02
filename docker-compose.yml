@@ -64,6 +64,8 @@ services:
       additional_contexts:
         gitmeta: ./.git
     # Guitar separation only, one at a time: each Demucs run needs ~3GB RAM.
+    # This is the CPU image: Standard quality (Demucs) only. High quality
+    # (Mega 53) needs an NVIDIA GPU and docker-compose.gpu.yml on top.
     command: celery -A tasks.celery_app worker --loglevel=info -Q separation --concurrency 1 -n separation@%h
     environment:
       - REDIS_URL=redis://redis:6379/0
