@@ -1,13 +1,15 @@
 # Technique cleanup: vibrato merge and glide merge (2026-10-02)
 
-Measurement. Both merges exist in the pipeline's code
-(`worker/tasks/techniques.py`, applied by `transcribe.clean_notes` after
-`select_notes`) but are **switched off** (`transcribe.VIBRATO_MERGE`,
-`GLIDE_MERGE`), so the pipeline's output is unchanged: `regression_check`
-with both off is identical to the last baseline in every section.
+**Outcome:** the vibrato merge is **on** (`transcribe.VIBRATO_MERGE = 1`),
+with a vibrato marking in the MusicXML export. The glide merge is **off**
+(rejected). Sections "Results" and "Verdict" below are the first round,
+measured with both off; "Refinement and decision" at the end is the
+second round and the final state.
 
-All numbers are from the worker image at commit `3052db8`; the stale-image
-guard matched on every run. Reports: `data/_technique_cleanup/`.
+Both merges are in `worker/tasks/techniques.py`, applied by
+`transcribe.clean_notes` after `select_notes`. All numbers are from worker
+images whose stale-image guard matched (first round `3052db8`, second
+round `713924f`). Reports: `data/_technique_cleanup/`.
 
 **Why:** experiments/expression found that on real guitar (IDMT-SMT-Guitar)
 vibrato splits 55% of notes into same-fret repeats, and a bend or slide
@@ -119,15 +121,14 @@ Notes a merge removed, before the mapper:
 | solo clip vs its known tab | same | same | same |
 | EGSet12 | same | as above | as above |
 
-## Verdict, by the rule
+## Verdict of the first round, by the rule
 
 | merge | IDMT wrong notes | EGSet12 | regression check | keep? |
 |---|---|---|---|---|
 | vibrato | -130 (and -3 right) | loses 2 real notes on clean and 5 on heavy (recall -0.1 / -0.3 points); precision +0.2 / +0.4 on moderate / heavy | unchanged outside EGSet12 | **No, narrowly.** It hurts EGSet12, by 2 notes in 1,333 on the clean tone |
 | glide | -138 (and -44 right) | loses 7-11 real notes per tone; fast passages -2.4 to -3.6 recall points | synthetic chords get worse | **No** |
 
-Neither is switched on, and the vibrato marking in the MusicXML export
-was not added, since it would only exist with the vibrato merge.
+So after the first round neither was switched on.
 
 The vibrato merge is close: about 43 wrong notes removed on IDMT for each
 real note it loses there, and its EGSet12 cost is 7 notes over three tones
@@ -136,6 +137,67 @@ is acceptable, it is one line to turn on (`transcribe.VIBRATO_MERGE`). The
 obvious refinement, not measured, is to merge only across a join that lies
 inside the wobble, so a re-struck note before the vibrato starts stays
 separate.
+
+## Refinement and decision (second round)
+
+The rule was relaxed for the vibrato merge: a few real notes lost for 130
+wrong notes removed is an acceptable trade. First the refinement was
+tried.
+
+**"Wobble" variant** (`VIBRATO_MERGE = 2`): inside a run that has vibrato,
+two pieces are merged only if the wobble is there on both sides of their
+join (the strongest 4-8 Hz component of the 0.5 s before and of the 0.5 s
+after is 12 cents or more; a side shorter than 0.3 s can't show one, so
+that join is left alone). A note struck again before the vibrato starts,
+or after it stops, stays separate.
+
+| vibrato merge | IDMT wrong notes | IDMT right notes | vibrato notes that are one right note (of 162) | still split | EGSet12 real notes lost (clean / moderate / heavy) | EGSet12 wrong notes removed |
+|---|---|---|---|---|---|---|
+| off | | | 68 (42%) | 89 (55%) | | |
+| whole runs (plain) | **-130** | -3 | **102 (63%)** | 55 (34%) | 2 / 0 / 5 | 0 / 3 / 6 |
+| wobble, 12 cents | -80 | **0** | 73 (45%) | 84 (52%) | **1 / 0 / 1** | 0 / 2 / 1 |
+| wobble, 9 cents | -88 | 0 | 74 (46%) | 83 (51%) | 1 / 0 / 1 | 0 / 2 / 1 |
+| wobble, 6 cents | -92 | 0 | 76 (47%) | 81 (50%) | 1 / 0 / 1 | 0 / 2 / 2 |
+
+EGSet12 benchmark, recall / precision / position:
+
+| | clean | moderate | heavy |
+|---|---|---|---|
+| off | 71.9 / 85.2 / 53.2 | 55.8 / 80.7 / 48.3 | 38.5 / 71.7 / 45.0 |
+| whole runs | 71.8 / 85.2 / 53.3 | 55.8 / 80.9 / 48.3 | 38.2 / 72.1 / 45.4 |
+| wobble | 71.9 / 85.2 / 53.3 | 55.8 / 80.9 / 48.3 | 38.5 / 71.8 / 45.1 |
+
+- **The refinement does what it was meant to:** it loses no right notes on
+  IDMT and 2 on EGSet12 (against 3 and 7).
+- **But it repairs far less.** It removes 80 wrong notes where the plain
+  merge removes 130, and only 5 more vibrato notes come out as one right
+  note (the plain merge: 34 more). Vibrato usually splits a note into short
+  pieces, and a short piece at the edge of the run has no 0.3 s of wobble
+  on its outer side, so its join is left alone, which is the same shape as
+  the re-struck note the rule is there to protect. Lowering the threshold
+  doesn't change that (92 at 6 cents).
+
+**Decision: the plain merge is on.** Going from the wobble variant to the
+plain one removes 50 more wrong notes on IDMT (and 6 more on EGSet12) for 8
+more real notes lost across IDMT and the three EGSet12 tones, and it is
+the only one that visibly reduces split vibrato notes (55% to 34%). The
+wobble variant stays in the code as `VIBRATO_MERGE = 2`.
+
+**Glide merge: off, rejected** (first round: it loses real notes on plain
+playing and worsens the synthetic chord set).
+
+**Vibrato marking:** a merged or detected note carries `"vibrato": true`
+through the mapper into the result's notes. The MusicXML export writes a
+`<wavy-line>` on both staves (on the first piece of a tied note). Checked
+with a real vibrato recording from IDMT submitted as a job: 2 of its 32
+notes are flagged, the export passes the MusicXML 4.0 XSD, and alphaTab
+holds both notes as vibrato on both staves and draws the wavy lines
+(`data/_technique_cleanup/vibrato_sheet.png`).
+
+**Regression check with the merge on** (`data/_regression/
+vibrato_merge_after.*`, the new baseline): the synthetic chord set, the
+Fire Force windows and the solo clip are identical to the previous
+baseline. EGSet12 changes as in the table above.
 
 ## Reproduce
 
@@ -146,7 +208,8 @@ W="docker run --rm -v $R/data:/app/data -v $R:/repo:ro -v $R/experiments/techniq
 $W python /x/cleanup.py idmt
 $W python /x/cleanup.py egset12
 $W python -m scripts.regression_check --compare /app/data/_regression/hq_separation_after.json
-$W python -m scripts.regression_check --vibrato-merge 1 --compare /app/data/_regression/hq_separation_after.json
+$W python -m scripts.regression_check --vibrato-merge 0 --compare /app/data/_regression/hq_separation_after.json
+$W python -m scripts.regression_check --vibrato-merge 2 --compare /app/data/_regression/hq_separation_after.json
 $W python -m scripts.regression_check --glide-merge 1 --compare /app/data/_regression/hq_separation_after.json
 ```
 
