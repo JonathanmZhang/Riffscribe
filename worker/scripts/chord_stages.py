@@ -179,9 +179,13 @@ def run_stages(events: list[dict], config: StageConfig = PIPELINE, activations: 
         )
     selected = sorted(transcribe.select_notes(events, threshold=config.threshold, chord_floor=config.chord_floor),
                       key=lambda e: (e["start_time"], e["midi"]))
-    # "events" keeps the notes as selected; "kept" is after the merges.
     kept = transcribe.clean_notes([e for e in selected if e["kept"]], bool(config.vibrato_merge),
                                   bool(config.glide_merge))
+    # A note a merge absorbed is no longer in the tab: unkept in "events"
+    # too, so the per-chord analysis counts it as lost after detection.
+    remaining = {note_key(n) for n in kept}
+    selected = [e if not e["kept"] or note_key(e) in remaining else {**e, "kept": False, "merged_away": True}
+                for e in selected]
 
     messages: list[str] = []
 
