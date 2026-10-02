@@ -59,6 +59,9 @@ class StageConfig:
     bp_onset: float = transcribe.BASIC_PITCH_ONSET_THRESHOLD
     bp_frame: float = transcribe.BASIC_PITCH_FRAME_THRESHOLD
     bp_min_note_ms: float = transcribe.BASIC_PITCH_MIN_NOTE_LENGTH_MS
+    # Technique merges after selection (transcribe.clean_notes), 0 or 1.
+    vibrato_merge: int = int(transcribe.VIBRATO_MERGE)
+    glide_merge: int = int(transcribe.GLIDE_MERGE)
 
     def describe(self) -> str:
         return ", ".join(f"{f.name}={getattr(self, f.name)}" for f in dataclasses.fields(self))
@@ -176,7 +179,9 @@ def run_stages(events: list[dict], config: StageConfig = PIPELINE, activations: 
         )
     selected = sorted(transcribe.select_notes(events, threshold=config.threshold, chord_floor=config.chord_floor),
                       key=lambda e: (e["start_time"], e["midi"]))
-    kept = [e for e in selected if e["kept"]]
+    # "events" keeps the notes as selected; "kept" is after the merges.
+    kept = transcribe.clean_notes([e for e in selected if e["kept"]], bool(config.vibrato_merge),
+                                  bool(config.glide_merge))
 
     messages: list[str] = []
 

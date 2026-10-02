@@ -9,6 +9,7 @@ from basic_pitch.constants import AUDIO_SAMPLE_RATE, FFT_HOP
 from basic_pitch.inference import run_inference
 from basic_pitch.note_creation import model_output_to_notes
 
+from tasks import techniques
 from tasks.beats import estimate_rhythm
 from tasks.celery_app import app
 from tasks.chords import recognize_chords
@@ -28,6 +29,11 @@ CHORD_TONE_CONFIDENCE_FLOOR = float(os.environ.get("CHORD_TONE_CONFIDENCE_FLOOR"
 BASIC_PITCH_ONSET_THRESHOLD = float(os.environ.get("BASIC_PITCH_ONSET_THRESHOLD", "0.5"))
 BASIC_PITCH_FRAME_THRESHOLD = float(os.environ.get("BASIC_PITCH_FRAME_THRESHOLD", "0.4"))
 BASIC_PITCH_MIN_NOTE_LENGTH_MS = float(os.environ.get("BASIC_PITCH_MIN_NOTE_LENGTH_MS", "80"))
+# Note cleanup from Basic Pitch's pitch offsets (tasks/techniques.py), after
+# select_notes: join a note that vibrato split into same-pitch pieces, and
+# join a note the pitch glides into (a bend or slide) to the one it left.
+VIBRATO_MERGE = False
+GLIDE_MERGE = False
 
 
 def notes_from_model_output(
@@ -61,8 +67,10 @@ def notes_from_model_output(
             "start_time": start_time,
             "end_time": end_time,
             "amplitude": float(amplitude),
+            # Per frame, the pitch offset in thirds of a semitone (techniques.py).
+            "bends": [int(b) for b in pitch_bends],
         }
-        for start_time, end_time, pitch_midi, amplitude, _pitch_bends in note_events
+        for start_time, end_time, pitch_midi, amplitude, pitch_bends in note_events
     ]
 
 
@@ -108,6 +116,12 @@ def select_notes(
     ]
 
 
+def clean_notes(kept: list[dict], vibrato_merge: bool = VIBRATO_MERGE, glide_merge: bool = GLIDE_MERGE) -> list[dict]:
+    """The kept notes after the enabled technique merges (tasks/techniques
+    .cleanup). Shared by extract_notes and the measurement scripts' stages."""
+    return techniques.cleanup(kept, vibrato_merge, glide_merge)
+
+
 def extract_notes(audio_path: str) -> tuple[int, list[dict]]:
     """Runs Basic Pitch on audio_path and applies the confidence filter.
     Returns (raw note count, kept notes in raw_note_events shape). Pure: no
@@ -115,12 +129,11 @@ def extract_notes(audio_path: str) -> tuple[int, list[dict]]:
     extraction as the pipeline.
     """
     events, _ = detect_note_events(audio_path)
-    kept = [
-        {key: event[key] for key in ("pitch", "start_time", "end_time", "amplitude")}
-        for event in select_notes(events)
-        if event["kept"]
+    kept = clean_notes([event for event in select_notes(events) if event["kept"]])
+    return len(events), [
+        {key: note[key] for key in ("pitch", "start_time", "end_time", "amplitude", "vibrato") if key in note}
+        for note in kept
     ]
-    return len(events), kept
 
 
 @app.task(name="transcribe", soft_time_limit=120)
