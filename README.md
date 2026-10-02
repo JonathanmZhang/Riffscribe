@@ -108,7 +108,7 @@ Clean, solo guitar gives the best results. A short instrumental clip without dru
 | Separator | [Demucs](https://github.com/facebookresearch/demucs) `htdemucs_6s` | [MVSep Mega 53 Stems](https://github.com/ZFTurbo/Music-Source-Separation-Training/releases/tag/v1.0.21) (BS-RoFormer), its `guitar` stem |
 | Runs on | CPU, any computer | NVIDIA GPU only |
 | Started with | `docker compose up -d --build` | the same command with `-f docker-compose.yml -f docker-compose.gpu.yml` |
-| Time for a 102 s song (measured, see below) | about 2 minutes | about 3 minutes |
+| Time for a 102 s song (measured, see below) | about 2 to 2.5 minutes | about 3 to 3.5 minutes |
 | Memory | about 2 GB of RAM | about 2.9 GB of GPU memory |
 
 Both are limited to 120 seconds of audio (`MAX_SEPARATION_DURATION_SECONDS`).
@@ -145,13 +145,13 @@ Read these with their limits in mind:
 
 | Job | Standard | High quality |
 |---|---|---|
-| A 102 s full-band song, whole job | 127 s | 183 s |
-| of which separation | 108 s | 164 s |
-| A 120 s song (the longest allowed), whole job | not measured | 222 s |
+| A 102 s full-band song, whole job (two runs each) | 127 s, 154 s | 183 s, 199 s |
+| of which separation | 108 s, 128 s | 164 s, 169 s |
+| A 120 s song (the longest allowed), whole job (one run) | not measured | 222 s |
 | of which separation | not measured | 194 s |
 | Peak GPU memory on the 120 s song | none | 2,873 MiB of the card's 4,096 MiB |
 
-These are single runs on a warm stack. The first job after the stack starts is slower (323 s for the 102 s song at High quality). Demucs' speed varies a lot from run to run with other load on the computer. Mega 53 runs in its own process for each job, so the GPU memory is free again when the job's separation ends. Cards with less than 4 GB haven't been tried.
+All of these are on a warm stack. The first job after the stack starts is slower (323 s for the 102 s song at High quality). Demucs' speed varies a lot from run to run with other load on the computer. Mega 53 runs in its own process for each job, so the GPU memory is free again when the job's separation ends. Cards with less than 4 GB haven't been tried.
 
 ### Configuration
 
