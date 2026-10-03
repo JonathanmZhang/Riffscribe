@@ -167,6 +167,9 @@ export default function TabViewer({ result, audioRef }: TabViewerProps) {
     // was the user's (e.g. dragging the scrollbar).
     let scrollLeft = scroller.scrollLeft;
     let lastFrameTime = 0;
+    // Reduced motion: the tab still follows, but jumps to each new position
+    // instead of easing there.
+    const motionQuery = window.matchMedia("(prefers-reduced-motion: reduce)");
     const targetFor = (index: number) => {
       const visible = geometry.viewWidth - geometry.labelWidth;
       const left = geometry.columnLeft[index] - geometry.labelWidth - visible * FOLLOW_ANCHOR;
@@ -216,7 +219,7 @@ export default function TabViewer({ result, audioRef }: TabViewerProps) {
       if (Math.abs(distance) < 0.5) return;
       // Ease toward the target (time-based, so smooth at any frame rate and
       // playback speed); jump when it's more than a screen away (a seek).
-      const next = Math.abs(distance) > geometry.viewWidth
+      const next = Math.abs(distance) > geometry.viewWidth || motionQuery.matches
         ? target
         : scrollLeft + distance * (1 - Math.exp(-dt / FOLLOW_EASE_MS));
       scrollLeft = next;
@@ -254,7 +257,7 @@ export default function TabViewer({ result, audioRef }: TabViewerProps) {
           ["Notes", String(result.notes.length)],
         ].map(([label, value]) => (
           <div key={label} className="flex gap-1.5 rounded-md bg-slate-100 px-2.5 py-1">
-            <dt className="text-slate-500">{label}</dt>
+            <dt className="text-slate-600">{label}</dt>
             <dd className="font-semibold text-slate-800">{value}</dd>
           </div>
         ))}
@@ -272,12 +275,20 @@ export default function TabViewer({ result, audioRef }: TabViewerProps) {
           Follow
         </button>
       )}
-      <div ref={scrollerRef} className="overflow-x-auto rounded-lg border border-slate-200 bg-slate-50">
+      {/* Focusable so the tab can be scrolled from the keyboard (arrow
+          keys); that pauses auto-follow like any manual scroll. */}
+      <div
+        ref={scrollerRef}
+        tabIndex={0}
+        role="region"
+        aria-label="Tablature: one row per string, one column per time step"
+        className="overflow-x-auto rounded-lg border border-slate-200 bg-slate-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-500"
+      >
         <table ref={tableRef} className="border-collapse font-mono text-sm" data-active-step={-1}>
           <tbody>
             {chordNames.some(Boolean) && (
               <tr className="border-b border-slate-200">
-                <td className="sticky left-0 z-10 border-r border-slate-200 bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-400">
+                <td className="sticky left-0 z-10 border-r border-slate-200 bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-600">
                   Chord
                 </td>
                 {chordNames.map((name, i) => (
@@ -289,7 +300,7 @@ export default function TabViewer({ result, audioRef }: TabViewerProps) {
             )}
             {STRING_DISPLAY_ORDER.map((string) => (
               <tr key={string}>
-                <td className="sticky left-0 z-10 border-r border-slate-200 bg-slate-100 px-3 py-1 font-semibold text-slate-500">
+                <td className="sticky left-0 z-10 border-r border-slate-200 bg-slate-100 px-3 py-1 font-semibold text-slate-600">
                   {STRING_LABELS[string]}
                 </td>
                 {steps.map((step, i) => {
@@ -303,7 +314,9 @@ export default function TabViewer({ result, audioRef }: TabViewerProps) {
                         note ? "font-semibold text-slate-900" : "text-slate-300"
                       }`}
                     >
-                      {note ? note.fret : "-"}
+                      {/* Empty cells show a CSS-drawn dash (globals.css): a
+                          visual guide, not content. */}
+                      {note ? note.fret : null}
                     </td>
                   );
                 })}
@@ -312,7 +325,7 @@ export default function TabViewer({ result, audioRef }: TabViewerProps) {
             <tr className="border-t border-slate-200">
               <td className="sticky left-0 z-10 border-r border-slate-200 bg-slate-100 px-3 py-1" />
               {steps.map((step, i) => (
-                <td key={i} data-col-time={i} className="px-2 py-1 text-center text-xs text-slate-400">
+                <td key={i} data-col-time={i} className="px-2 py-1 text-center text-xs text-slate-600">
                   {step.time.toFixed(2)}s
                 </td>
               ))}
@@ -323,10 +336,15 @@ export default function TabViewer({ result, audioRef }: TabViewerProps) {
       </div>
 
       {/* Exact per-note detail, in time order. */}
-      <div className="max-h-96 overflow-y-auto rounded-lg border border-slate-200">
+      <div
+        tabIndex={0}
+        role="region"
+        aria-label="Notes in time order"
+        className="max-h-96 overflow-y-auto rounded-lg border border-slate-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-500"
+      >
         <table className="w-full text-sm">
           <thead className="sticky top-0 bg-slate-50">
-            <tr className="border-b border-slate-200 text-left text-xs uppercase tracking-wide text-slate-500">
+            <tr className="border-b border-slate-200 text-left text-xs uppercase tracking-wide text-slate-600">
               <th className="px-4 py-2 font-semibold">Start</th>
               <th className="px-4 py-2 font-semibold">End</th>
               <th className="px-4 py-2 font-semibold">String</th>

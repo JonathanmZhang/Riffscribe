@@ -116,14 +116,19 @@ export default function UploadForm({ onJobCreated }: UploadFormProps) {
 
       {mode === "file" ? (
         <>
+          <label htmlFor="audio-file" className="sr-only">
+            Audio or video file
+          </label>
           <input
+            id="audio-file"
             key="file-input"
             type="file"
+            aria-describedby="audio-file-hint"
             accept=".mp3,.wav,.m4a,.mp4,.webm,.mov"
             onChange={(event) => setFile(event.target.files?.[0] ?? null)}
             className="rounded-lg border border-slate-300 bg-white p-2 text-sm text-slate-700 file:mr-3 file:rounded-md file:border-0 file:bg-indigo-50 file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-indigo-700 hover:file:bg-indigo-100"
           />
-          <p className="-mt-2 text-xs text-slate-500">
+          <p id="audio-file-hint" className="-mt-2 text-xs text-slate-500">
             Audio (MP3, WAV, M4A) or video (MP4, WebM, MOV), up to 200 MB. For video, only the sound is used.
           </p>
           {!URL_INGESTION_ENABLED && (

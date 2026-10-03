@@ -22,6 +22,14 @@ body {
   }
 }
 
+/* Empty tab cells: the dash is a visual guide to the string, drawn here
+   rather than as text so it isn't read out or counted as content. The
+   "/ ''" gives it empty alternative text where supported. */
+td[data-col][data-empty]::before {
+  content: "-";
+  content: "-" / "";
+}
+
 /* Tab playhead. TabViewer's animation-frame loop moves the `is-active` class
    between columns directly (no React re-render per column change), so the
    highlight lands in the same frame it's decided. Attribute + class selectors
