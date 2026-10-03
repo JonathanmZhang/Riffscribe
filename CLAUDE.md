@@ -24,6 +24,11 @@ condensed, enforceable rules Claude Code should follow every session.
   isolate_guitar jobs separation_quality (asked for), separator ("demucs"
   | "mega53", what made the stem) and separation_note (why a "high" job
   used Demucs). These are job fields, never part of result.
+- POST /jobs/{job_id}/rerun — {isolate_guitar?: true, separation_quality?}
+  -> 202 {job_id, status} of a NEW job made from a copy of the old job's
+  source_audio_path (a link isn't downloaded again). 404 unknown job, 409
+  if that file is gone. The result page's "Re-run with Isolate guitar"
+  uses it.
 - GET /capabilities — {separation: {high_quality_available,
   high_quality_unavailable_reason, gpu, gpu_memory_mib}}, from the Redis
   key separation:capabilities that worker-separation writes at its start.
@@ -165,6 +170,23 @@ stays the fixed four-value enum.
   `docker run`, mount the repo: -v <repo>:/repo:ro. Always rebuild
   before measuring - a stale hand-position image once skewed every
   position number in three experiments.
+- Playback source (JobStatus.tsx, "Listen to"): Original (GET /audio),
+  Guitar only (GET /stem; disabled unless stem_available) in both views,
+  and Synth in the sheet-music view (with the Tone selector). Original and
+  stem share the one <audio>, so the tab highlight, auto-follow and speed
+  work for both. A switch carries the position: JobStatus's positionRef
+  (recording seconds + playing) is read from the <audio> when leaving a
+  recording and kept current by SheetMusicView while the synth plays;
+  recording <-> synth is mapped bar by bar through result.bars. While a
+  score loads alphaTab stops and rewinds its player; SheetMusicView's
+  settlingRef keeps that away from the <audio> (it was resetting the
+  recording to 0 on every switch into the sheet view). In synth mode the
+  hand-off is polled every 100ms (apply once the new score is in and
+  isReadyForPlayback, then track tickPosition): in alphaTab 1.8.4,
+  subscribing to the synth player's midiLoaded recurses until the stack
+  overflows (its loadedMidiInfo getter calls itself) - don't use that
+  event in synth mode. ?debug=1&src=stem only preselects Guitar only now;
+  with ?debug=1, window.riffscribePosition is the hand-off ref.
 - Frontend has a light Tailwind polish pass done (colors, layout, status
   badges, sticky grid headers) but no real design system yet — a Figma
   pass is planned later. Don't over-invest further in visual redesign

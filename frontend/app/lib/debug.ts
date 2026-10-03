@@ -1,7 +1,7 @@
 // Developer-only URL flags, read on the client:
 //   ?debug=1           show the playback lag overlay (components/DebugOverlay)
 //   &job=<job id>      open an existing job instead of submitting a new one
-//   &src=stem          play the separated guitar stem instead of the mix
+//   &src=stem          start on "Guitar only" (the separated stem) if the job has one
 // Without debug=1 the other flags are ignored.
 export interface DebugParams {
   debug: boolean;

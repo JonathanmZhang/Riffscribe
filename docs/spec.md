@@ -63,6 +63,12 @@ separation_quality: "standard" (default; Demucs) or "high" (Mega 53, needs
 an NVIDIA GPU). Any other value → 422. "high" is accepted even where it
 can't run: the job is then separated with Demucs (see 3.4).
 
+POST /jobs/{job_id}/rerun — JSON {isolate_guitar (default true),
+separation_quality (default "standard")}. A new job from a copy of the
+existing job's source audio (the file ingest_audio kept, so a link isn't
+downloaded again), returned like POST /jobs (202 {job_id, status:
+"queued"}). 404 if the job is unknown, 409 if its source audio is gone.
+
 GET /capabilities — Returns 200: {separation: {high_quality_available,
 high_quality_unavailable_reason, gpu, gpu_memory_mib}}, as reported by the
 separation worker when it started (Redis key separation:capabilities).

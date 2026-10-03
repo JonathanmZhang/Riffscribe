@@ -68,6 +68,14 @@ class JobOverrides(BaseModel):
     bar_offset_beats: Optional[BarOffset] = None
 
 
+class JobRerun(BaseModel):
+    """POST /jobs/{id}/rerun body: transcribe the same source audio again as
+    a new job, with these isolation settings."""
+
+    isolate_guitar: bool = True
+    separation_quality: SeparationQuality = "standard"
+
+
 class JobRecord(BaseModel):
     """Internal representation persisted in Redis."""
 

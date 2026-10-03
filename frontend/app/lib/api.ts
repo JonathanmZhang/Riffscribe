@@ -141,6 +141,24 @@ export function getJobAudioUrl(jobId: string): string {
   return `${API_BASE_URL}/jobs/${jobId}/audio`;
 }
 
+// The separated guitar (jobs run with Isolate guitar; see stem_available).
+export function getJobStemUrl(jobId: string): string {
+  return `${API_BASE_URL}/jobs/${jobId}/stem`;
+}
+
+// A new job from an existing job's source audio, with Isolate guitar on.
+export async function rerunJobWithIsolation(
+  jobId: string,
+  separationQuality: SeparationQuality,
+): Promise<JobCreateResponse> {
+  const response = await fetch(`${API_BASE_URL}/jobs/${jobId}/rerun`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ isolate_guitar: true, separation_quality: separationQuality }),
+  });
+  return parseOrThrow<JobCreateResponse>(response);
+}
+
 // Finished jobs only; recomputes the bars without re-transcribing.
 export async function setJobOverrides(
   jobId: string,

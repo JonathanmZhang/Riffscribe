@@ -30,7 +30,7 @@ export default function Home() {
         <UploadForm onJobCreated={setJobId} />
       </section>
 
-      {jobId && <JobStatus key={jobId} jobId={jobId} />}
+      {jobId && <JobStatus key={jobId} jobId={jobId} onJobCreated={setJobId} />}
     </main>
   );
 }

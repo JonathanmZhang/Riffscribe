@@ -1,6 +1,6 @@
 "use client";
 
-import { type RefObject, useEffect, useRef, useState } from "react";
+import { type MutableRefObject, type RefObject, useEffect, useRef, useState } from "react";
 import type * as AlphaTab from "@coderline/alphatab";
 import { getJobMusicXmlUrl, type BarOffsetBeats, type PlaybackTone, type TempoFactor } from "@/app/lib/api";
 import { readDebugParams } from "@/app/lib/debug";
@@ -40,15 +40,17 @@ function loadAlphaTab(): Promise<typeof AlphaTab> {
 // "recording": alphaTab's cursor follows the page's <audio> (original audio
 // or stem) through sync points, one per bar at the time the backend placed
 // it. "synth": alphaTab plays the notation itself with its SoundFont synth.
+// Which one is chosen by the page's source picker (JobStatus).
 export type SheetPlayback = "recording" | "synth";
 
-// Synth only: the General MIDI guitar the notation is played with.
-const PLAYBACK_TONES: { value: PlaybackTone; label: string }[] = [
-  { value: "clean", label: "Clean electric" },
-  { value: "overdriven", label: "Overdriven" },
-  { value: "distorted", label: "Distorted" },
-  { value: "acoustic", label: "Acoustic steel" },
-];
+// Where playback is, on the recording's time axis, and whether it is
+// playing. JobStatus owns it and hands it over when the source changes, so
+// a switch continues from the same place. While the synth plays, this
+// component keeps it up to date.
+export interface PlaybackPosition {
+  time: number;
+  playing: boolean;
+}
 
 // alphaTab's synth at its default volume (1.0) exceeds full scale with the
 // bundled SoundFont: peaks of +1.0 to +5.9 dBFS on three transcriptions x
@@ -65,6 +67,10 @@ interface SheetMusicViewProps {
   tempoFactor: TempoFactor;
   barOffsetBeats: BarOffsetBeats;
   playbackRate: number;
+  playback: SheetPlayback;
+  // Synth only: sets the export's MIDI program, which alphaTab's synth plays.
+  tone: PlaybackTone;
+  positionRef: MutableRefObject<PlaybackPosition>;
   onOverrides: (overrides: { tempo_factor?: TempoFactor; bar_offset_beats?: BarOffsetBeats }) => Promise<void>;
 }
 
@@ -80,6 +86,9 @@ export default function SheetMusicView({
   tempoFactor,
   barOffsetBeats,
   playbackRate,
+  playback,
+  tone,
+  positionRef,
   onOverrides,
 }: SheetMusicViewProps) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -87,8 +96,12 @@ export default function SheetMusicView({
   const apiRef = useRef<AlphaTab.AlphaTabApi | null>(null);
   const barsRef = useRef(bars);
   barsRef.current = bars;
-  const [playback, setPlayback] = useState<SheetPlayback>("recording");
-  const [tone, setTone] = useState<PlaybackTone>("clean");
+  // True from a score (re)load until the player has settled. alphaTab stops
+  // and rewinds its player while a score loads; meanwhile that is kept away
+  // from the recording (it plays on where it is), and in synth mode the
+  // player's position reports are ignored until the handed-over position
+  // has been applied.
+  const settlingRef = useRef(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [playerReady, setPlayerReady] = useState(false);
@@ -103,6 +116,7 @@ export default function SheetMusicView({
     const cleanups: (() => void)[] = [];
     setPlayerReady(false);
     setSynthPlaying(false);
+    settlingRef.current = true;
 
     loadAlphaTab()
       .then((at) => {
@@ -170,13 +184,13 @@ export default function SheetMusicView({
               audio.volume = value;
             },
             seekTo(ms: number) {
-              audio.currentTime = ms / 1000;
+              if (!settlingRef.current) audio.currentTime = ms / 1000;
             },
             play() {
-              void audio.play();
+              if (!settlingRef.current) void audio.play();
             },
             pause() {
-              audio.pause();
+              if (!settlingRef.current) audio.pause();
             },
           };
           // The audio element drives: its position feeds the cursor every
@@ -202,7 +216,19 @@ export default function SheetMusicView({
           audio.addEventListener("seeked", push);
           audio.addEventListener("timeupdate", push);
           if (!audio.paused) onPlay();
+          // The score's MIDI is loaded: alphaTab's player has finished its
+          // reset, so hand control back and put the cursor where the audio is.
+          let settleTimer = 0;
+          api.midiLoaded.on(() => {
+            window.clearTimeout(settleTimer);
+            settleTimer = window.setTimeout(() => {
+              settlingRef.current = false;
+              push();
+              if (!audio.paused) onPlay();
+            }, 200);
+          });
           cleanups.push(() => {
+            window.clearTimeout(settleTimer);
             cancelAnimationFrame(frame);
             audio.removeEventListener("play", onPlay);
             audio.removeEventListener("pause", onPause);
@@ -211,6 +237,60 @@ export default function SheetMusicView({
           });
         } else {
           audioRef.current?.pause(); // one sound source at a time
+          const synth = api;
+          // Recording time <-> score position, bar by bar: bar i of the score
+          // starts at bars[i] seconds of the recording.
+          const barSpan = (i: number): [number, number] => {
+            const b = barsRef.current;
+            const start = b[i] ?? 0;
+            return [start, b[i + 1] ?? start + (i > 0 ? b[i] - b[i - 1] : 2)];
+          };
+          const toTick = (seconds: number) => {
+            const masterBars = synth.score?.masterBars ?? [];
+            if (masterBars.length === 0) return 0;
+            let i = 0;
+            while (i + 1 < masterBars.length && i + 1 < barsRef.current.length && barsRef.current[i + 1] <= seconds) i++;
+            const [start, end] = barSpan(i);
+            const fraction = Math.min(Math.max((seconds - start) / Math.max(end - start, 1e-6), 0), 1);
+            return Math.round(masterBars[i].start + fraction * masterBars[i].calculateDuration());
+          };
+          const toSeconds = (tick: number) => {
+            const masterBars = synth.score?.masterBars ?? [];
+            if (masterBars.length === 0) return 0;
+            let i = 0;
+            while (i + 1 < masterBars.length && masterBars[i + 1].start <= tick) i++;
+            const [start, end] = barSpan(i);
+            const fraction = Math.min(Math.max((tick - masterBars[i].start) / Math.max(masterBars[i].calculateDuration(), 1), 0), 1);
+            return start + fraction * (end - start);
+          };
+          // Every 100ms: after a (re)load, once the score's MIDI and the
+          // SoundFont are both loaded, continue from where the previous
+          // source was; after that, keep the hand-over position current (the
+          // switch away reads it). Polled, not event-driven: in alphaTab
+          // 1.8.4 subscribing to the synth's midiLoaded recurses until the
+          // stack overflows.
+          // When to apply: a new instance is only ready for playback once
+          // its SoundFont and MIDI are loaded. On a reload (tone or bar
+          // change) the old MIDI keeps it "ready", so wait until the new MIDI
+          // has rewound the player into the first bar.
+          const track = window.setInterval(() => {
+            if (!synth.score) return;
+            if (settlingRef.current) {
+              const firstBar = synth.score.masterBars[0];
+              const rewound = !firstBar || synth.tickPosition < firstBar.calculateDuration();
+              if (!synth.isReadyForPlayback || !rewound) return;
+              settlingRef.current = false;
+              const { time, playing } = positionRef.current;
+              if (time > 0) synth.tickPosition = toTick(time);
+              if (playing) synth.play();
+              return;
+            }
+            positionRef.current = {
+              time: toSeconds(synth.tickPosition),
+              playing: synth.playerState === at.synth.PlayerState.Playing,
+            };
+          }, 100);
+          cleanups.push(() => window.clearInterval(track));
         }
       })
       .catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)));
@@ -221,7 +301,7 @@ export default function SheetMusicView({
       api?.destroy();
       apiRef.current = null;
     };
-  }, [playback, audioRef]);
+  }, [playback, audioRef, positionRef]);
 
   // (Re)load the score: on mount, on a playback-mode or tone switch and
   // after an override changes (bars differ). Nothing is re-transcribed; the
@@ -240,7 +320,9 @@ export default function SheetMusicView({
       for (let i = 0; !apiRef.current && i < 100 && !cancelled; i++) {
         await new Promise((r) => setTimeout(r, 50));
       }
-      if (!cancelled) apiRef.current?.load(data);
+      if (cancelled) return;
+      settlingRef.current = true;
+      apiRef.current?.load(data);
     };
     load().catch((e: unknown) => !cancelled && setError(e instanceof Error ? e.message : String(e)));
     return () => {
@@ -266,50 +348,16 @@ export default function SheetMusicView({
   return (
     <div className="flex flex-col gap-3">
       <div className="flex flex-wrap items-center gap-x-6 gap-y-2 text-sm">
-        <div className="flex items-center gap-2">
-          <span className="text-slate-500">Playback</span>
-          <div role="group" aria-label="Sheet music playback" className="inline-flex rounded-lg bg-slate-100 p-1 font-medium">
-            {(["recording", "synth"] as const).map((mode) => (
-              <button
-                key={mode}
-                type="button"
-                aria-pressed={playback === mode}
-                onClick={() => setPlayback(mode)}
-                className={`rounded-md px-3 py-1 transition-colors ${
-                  playback === mode ? "bg-white text-slate-900 shadow-sm" : "text-slate-600 hover:text-slate-900"
-                }`}
-              >
-                {mode === "recording" ? "Recording" : "Synth"}
-              </button>
-            ))}
-          </div>
-          {playback === "synth" && (
-            <button
-              type="button"
-              className={buttonClass}
-              disabled={!playerReady}
-              onClick={() => apiRef.current?.playPause()}
-            >
-              {!playerReady ? "Loading sounds…" : synthPlaying ? "Pause" : "Play"}
-            </button>
-          )}
-          {playback === "synth" && (
-            <label className="flex items-center gap-2">
-              <span className="text-slate-500">Tone</span>
-              <select
-                value={tone}
-                onChange={(event) => setTone(event.target.value as PlaybackTone)}
-                className="rounded-md border border-slate-200 bg-white px-2 py-1 text-sm font-medium text-slate-700 shadow-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-indigo-500"
-              >
-                {PLAYBACK_TONES.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-          )}
-        </div>
+        {playback === "synth" && (
+          <button
+            type="button"
+            className={buttonClass}
+            disabled={!playerReady}
+            onClick={() => apiRef.current?.playPause()}
+          >
+            {!playerReady ? "Loading sounds…" : synthPlaying ? "Pause" : "Play"}
+          </button>
+        )}
         <div className="flex items-center gap-2">
           <span className="text-slate-500">Bars</span>
           <button

@@ -13,11 +13,11 @@ import {
 type Mode = "file" | "url";
 
 const SEPARATION_QUALITIES: { value: SeparationQuality; label: string; description: string }[] = [
-  { value: "standard", label: "Standard", description: "Demucs. Works on any computer." },
+  { value: "standard", label: "Standard", description: "Works on any computer." },
   {
     value: "high",
     label: "High quality",
-    description: "Mega 53. Needs an NVIDIA GPU; takes a few minutes per song.",
+    description: "More accurate. Needs an NVIDIA GPU.",
   },
 ];
 
@@ -163,7 +163,10 @@ export default function UploadForm({ onJobCreated }: UploadFormProps) {
         <span className="flex flex-col">
           <span className="font-medium text-slate-800">Isolate guitar</span>
           <span className="text-xs text-slate-500">
-            Separates the guitar from the rest of the mix first. Slower: can take a few minutes.
+            Band recording? Turn this on. Solo guitar? Leave it off.
+          </span>
+          <span className="text-xs text-slate-500">
+            It separates the guitar from the other instruments first. Up to 2 minutes of audio; takes a few minutes.
           </span>
         </span>
       </label>

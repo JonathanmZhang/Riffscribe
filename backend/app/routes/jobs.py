@@ -6,12 +6,14 @@ from uuid import uuid4
 import redis.asyncio as redis
 from celery import Celery, chain, signature
 from fastapi import APIRouter, HTTPException, Request, status
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse, Response
 
 from app.schemas.job import (
     JobCreateResponse,
     JobOverrides,
     JobRecord,
+    JobRerun,
     JobStatus,
     JobStatusResponse,
     PlaybackTone,
@@ -155,6 +157,38 @@ async def create_job(request: Request) -> JobCreateResponse:
     _enqueue_pipeline(job_id, source, isolate_guitar)
 
     return JobCreateResponse(job_id=job_id, status=JobStatus.queued)
+
+
+@router.post("/{job_id}/rerun", response_model=JobCreateResponse, status_code=status.HTTP_202_ACCEPTED)
+async def rerun_job(job_id: str, options: JobRerun) -> JobCreateResponse:
+    """A new job from an existing job's source audio (the file ingest_audio
+    kept, so a link isn't downloaded again), with other isolation settings.
+    The audio is copied, so the two jobs stay independent."""
+    raw = await redis_client.get(_job_key(job_id))
+    if raw is None:
+        raise HTTPException(status_code=404, detail="Job not found")
+    # source_audio_path is internal (written by ingest_audio): raw-dict read.
+    source_path = _existing_file(json.loads(raw).get("source_audio_path"))
+    if source_path is None:
+        raise HTTPException(status_code=409, detail="This job's source audio is not available to run again")
+
+    new_id = str(uuid4())
+    new_dir = os.path.join(DATA_DIR, new_id)
+    os.makedirs(new_dir, exist_ok=True)
+    saved_path = os.path.join(new_dir, f"original{os.path.splitext(source_path)[1].lower()}")
+    await run_in_threadpool(shutil.copyfile, source_path, saved_path)
+
+    job = JobRecord(
+        job_id=new_id,
+        status=JobStatus.queued,
+        error=None,
+        result=None,
+        isolate_guitar=options.isolate_guitar,
+        separation_quality=options.separation_quality if options.isolate_guitar else None,
+    )
+    await redis_client.set(_job_key(new_id), job.model_dump_json())
+    _enqueue_pipeline(new_id, {"type": "file", "path": saved_path}, options.isolate_guitar)
+    return JobCreateResponse(job_id=new_id, status=JobStatus.queued)
 
 
 def _status_response(raw: str) -> JobStatusResponse:
