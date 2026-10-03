@@ -1,0 +1,17 @@
+{
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "gray-on-color",
+        "value": "*",
+        "files": [
+          "frontend/app/components/UploadForm.tsx"
+        ],
+        "createdAt": "2026-10-02T11:40:01.721Z",
+        "reason": "Claude: false positive on the pre-existing file input (line 124): text-slate-700 sits on bg-white; the indigo-50 background is only the file: button, whose text is indigo-700"
+      }
+    ]
+  }
+}
