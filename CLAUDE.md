@@ -497,6 +497,12 @@ YouTube URL via the yt-dlp ingestion path).
   inherent to the model, not addressed by this codebase; tab grid
   doesn't auto-scroll to follow playback
 
-NEXT: README, then deployment (Render/Railway for backend+worker,
-Vercel for frontend), then resume bullets locked once a real live link
-exists.
+README is the portfolio page (docs/readme): pitch, screenshots from
+EGSet12 only (docs/images/, made with the Playwright image; never use
+audio without a CC/public-domain license there), measured results,
+rejected approaches, licenses. Setup/config/API detail lives in
+docs/setup.md - keep the README under ~250 lines. Demo video and GIF are
+still placeholders.
+
+NEXT: deployment (Render/Railway for backend+worker, Vercel for
+frontend), then resume bullets locked once a real live link exists.

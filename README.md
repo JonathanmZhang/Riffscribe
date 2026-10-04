@@ -1,312 +1,158 @@
 # Riffscribe
 
-**Audio in, guitar tab out.** Riffscribe turns a guitar recording (an uploaded file or a YouTube/SoundCloud link) into playable tablature. It detects the notes in the recording, works out where on the fretboard each one is most naturally played, and shows the result as a tab that highlights along with the audio as it plays.
+**Turn a guitar recording into tab and sheet music you can play along with.**
 
-Transcription is slow (ML inference plus a search over fretboard positions), so the whole pipeline runs asynchronously. The API accepts a job immediately, a Celery worker processes it in the background, and the frontend polls until the tab is ready.
+<!-- DEMO VIDEO: replace with the link once it's recorded -->
+**Demo video:** _coming soon_
 
-## Architecture
+<!-- DEMO GIF: replace docs/images/demo.gif once it's recorded -->
+_Demo GIF coming soon._
 
-```
- Next.js UI ──POST /jobs──▶ FastAPI ──enqueue──▶ Redis (broker + job state)
-     ▲                         │                        │
-     │                         │                        ▼
-     └──GET /jobs/{id} (poll)──┘            Celery workers: chained tasks
-        GET /jobs/{id}/audio                  1. ingest_audio
-        GET /jobs/{id}/stem                  (2. separate_guitar  (Demucs or Mega 53), optional)
-                                              3. transcribe     (Basic Pitch)
-                                              4. map_fretboard  (DP search)
-```
-
-1. **FastAPI** (`backend/`) validates the upload or URL, creates a `job:{job_id}` record in Redis with status `queued`, enqueues the pipeline, and returns `202 Accepted` right away.
-2. **Celery + Redis** (`worker/`) runs separate chained tasks. Tasks don't pass return values to each other: each one reads and writes shared job state in Redis by `job_id`. Each task sets `processing` and its pipeline `stage` when it starts. Any exception marks the job `failed` with an error message naming the stage, so a job never fails silently.
-   - **`ingest_audio`** downloads URLs with yt-dlp, then normalizes every input to a mono, 22.05 kHz WAV with librosa.
-   - **`separate_guitar`** runs only when the job was submitted with **Isolate guitar**. It separates the guitar from the original (full-rate, stereo) source, and the guitar stem is then transcribed instead of the full mix. There are two separators, chosen per job: **Standard** is Demucs' `htdemucs_6s` model on the CPU, and **High quality** is MVSep Mega 53 on an NVIDIA GPU. See [Guitar isolation quality](#guitar-isolation-quality). Separation needs a lot of memory, so it runs on its own `separation` queue, served one job at a time by a dedicated `worker-separation` service. It's also slow: Demucs took about 1–4 seconds per second of audio on an 8-core machine in testing.
-   - **`transcribe`** runs Spotify's [Basic Pitch](https://github.com/spotify/basic-pitch) for polyphonic pitch detection. Notes below the confidence threshold (0.5 by default) are discarded. A note that vibrato split into several same-pitch pieces is joined back into one and flagged `vibrato`. It also estimates the tempo with librosa's beat tracker.
-   - **`map_fretboard`** assigns every note a (string, fret) position. Notes whose onsets fall within 150 ms of each other are grouped into one chord. A Viterbi-style dynamic program then picks the lowest-cost path through all candidate positions for the whole piece, rather than choosing each note greedily. The cost of a move is fret-hand travel, plus a penalty for stretches wider than 4 frets and for staying on the same string, minus a bonus for open strings. When two paths tie, the one lower on the neck wins. Chords are voiced onto distinct strings.
-3. **Next.js** (`frontend/`) submits the job, polls its status, and renders the result two ways: a string-by-fret tab grid and a per-note detail table. Both highlight the notes sounding at the current playback position of an `<audio>` element that streams the job's normalized audio. Seeking works because the audio endpoint supports HTTP Range requests. For practice, playback can be slowed to 0.75x or 0.5x, and the highlighting stays in sync because it follows the audio's own playback position.
-
-## Running locally
-
-Everything runs in Docker. You don't need Python, Node.js or any ML libraries on your machine.
-
-### Prerequisites
-
-- **[Docker Desktop](https://www.docker.com/products/docker-desktop/), installed and running.** On Linux, Docker Engine with the Compose plugin works too. Check that Docker is up with `docker compose version`, which should print a version and not an error.
-- **About 12 GB of free disk space.** The built images total about 6 GB, and the build needs working space on top of that. Nearly all of it is the worker image (5.3 GB): Basic Pitch depends on TensorFlow, and guitar separation adds PyTorch and the Demucs model. The two worker services share the same image.
-- **About 4 GB of memory available to Docker** if you use **Isolate guitar**. A separation peaked at about 2 GB in testing, on top of the other services.
-- **Optional: an NVIDIA GPU**, for the High quality setting of **Isolate guitar**. It needs about 3 GB of free GPU memory and about 8 GB more disk space. Everything else works without one. See [Guitar isolation quality](#guitar-isolation-quality).
-- **Ports 3000, 8000 and 6379 free.** 6379 is Redis, so stop any local Redis first.
-- **Git**, to clone the repo.
-
-Tested on Windows 11 with Docker Desktop (WSL 2).
-
-### Steps
-
-1. Clone the repository:
-   ```bash
-   git clone https://github.com/JonathanmZhang/Riffscribe.git
-   ```
-2. Move into it:
-   ```bash
-   cd Riffscribe
-   ```
-3. Build and start all five services (frontend, API, the main worker, the separation worker, Redis):
-   ```bash
-   docker compose up -d --build
-   ```
-   The first build downloads and installs every dependency. **Expect roughly 5–15 minutes, longer on a slow connection.** Most of that is the worker image's TensorFlow and PyTorch installs, during which the output can sit on one step for several minutes. That's normal. Later starts reuse the built images and take seconds.
-4. Check that all five containers are running:
-   ```bash
-   docker compose ps
-   ```
-   You should see `backend`, `frontend`, `redis`, `worker` and `worker-separation`, each with status `Up`. The API takes a second or two to start accepting requests after its container starts.
-5. Open **http://localhost:3000** in your browser.
-
-| Service  | Address |
-|----------|---------|
-| Frontend | http://localhost:3000 |
-| API      | http://localhost:8000 (interactive docs at http://localhost:8000/docs) |
-| Redis (Valkey) | localhost:6379 |
-
-To stop everything, run `docker compose down`. Uploaded and normalized audio is kept in `./data/{job_id}/` inside the repo folder.
-
-### What to expect on the first job
-
-**The first job after the stack starts takes about 30–60 seconds, even for a few seconds of audio.** Later jobs on the same audio are much faster. This is a one-time warm-up, not a hang:
-
-- librosa compiles its audio code the first time it's used.
-- Basic Pitch loads its model into memory.
-
-Both happen once per worker container. In testing, an 8-second clip took 47 s on a fresh worker and 8 s on the next run. The status badge shows `processing` during the wait. To watch the worker live, run `docker compose logs -f worker`.
-
-### Try it
-
-For a first run, use this 8-second public-domain guitar clip from Wikimedia Commons ([file page](https://commons.wikimedia.org/wiki/File:Guitar_tabulature_sample.ogg)):
-
-1. On http://localhost:3000, choose **Paste URL**.
-2. Paste the clip's direct link:
-   ```
-   https://upload.wikimedia.org/wikipedia/commons/0/08/Guitar_tabulature_sample.ogg
-   ```
-3. Click **Transcribe**. When the status turns `done`, a tab of about three dozen notes appears. Press play, and the notes being played highlight as the audio plays.
-
-The link has to go through **Paste URL**, because file uploads only accept `.mp3`, `.wav`, `.m4a`, `.mp4`, `.webm` and `.mov`, and this clip is `.ogg`.
-
-After that, try your own audio:
-
-- **Upload file:** audio (`.mp3`, `.wav`, `.m4a`) or video (`.mp4`, `.webm`, `.mov`), up to 200 MB and 5 minutes long. For video, only the audio track is used.
-- **Paste URL:** a YouTube or SoundCloud link, or any direct link to an audio file.
-
-Clean, solo guitar gives the best results. A short instrumental clip without drums or vocals is a good choice. In a full band mix, other instruments show up as extra notes. See [Known limitations](#known-limitations).
-
-### Guitar isolation quality
-
-**Isolate guitar** separates the guitar from the rest of the mix before transcribing. When it's ticked, the upload form offers two qualities:
-
-| | Standard | High quality |
+| Sheet music, cursor following the recording | Tab view, neck position "around fret 6" | Upload, with guitar isolation |
 |---|---|---|
-| Separator | [Demucs](https://github.com/facebookresearch/demucs) `htdemucs_6s` | [MVSep Mega 53 Stems](https://github.com/ZFTurbo/Music-Source-Separation-Training/releases/tag/v1.0.21) (BS-RoFormer), its `guitar` stem |
-| Runs on | CPU, any computer | NVIDIA GPU only |
-| Started with | `docker compose up -d --build` | the same command with `-f docker-compose.yml -f docker-compose.gpu.yml` |
-| Time for a 102 s song (measured, see below) | about 2 to 2.5 minutes | about 3 to 3.5 minutes |
-| Memory | about 2 GB of RAM | about 2.9 GB of GPU memory |
+| ![Sheet music view: notation and TAB staves with chord names, the cursor on bar 2](docs/images/sheet_music.png) | ![Tab grid with the neck position set to around fret 6 and the current column highlighted](docs/images/tab_view.png) | ![Upload form with Isolate guitar on and Standard / High quality separation](docs/images/upload_form.png) |
 
-Both are limited to 120 seconds of audio (`MAX_SEPARATION_DURATION_SECONDS`).
+<sub>Screenshots: EGSet12 performances 06 and 12 (CC BY 4.0, see [Datasets](#datasets)).</sub>
 
-**Turning High quality on.** It needs an NVIDIA GPU, a current NVIDIA driver, and Docker's GPU support. Docker Desktop on Windows with the WSL 2 backend has that built in; on Linux, install the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html). Then start the stack with the GPU override file:
+## What it does
+
+1. **Input:** an audio or video file, or a YouTube / SoundCloud link.
+2. **Optional guitar isolation:** separates the guitar from a band before transcribing. **Standard** uses Demucs on the CPU. **High quality** uses MVSep Mega 53 on an NVIDIA GPU, and if it fails, the job falls back to Demucs rather than failing.
+3. **Output:** a tab grid and sheet music (notation + TAB), with chord names, beats and bar lines.
+   - **Listen to** the Original recording, the isolated guitar (Guitar only) or a Synth rendition, at 0.5x, 0.75x or 1x. The tab and the score cursor follow along.
+   - **Neck position:** Auto, Open, or "around fret N". The same notes are re-placed in that part of the neck, without re-transcribing.
+   - **Tempo ×2 / ÷2 and Shift bar start** fix the bar lines when the beat tracker gets the tempo or downbeat wrong.
+   - **Download MusicXML** to open in MuseScore or Guitar Pro.
+
+## Quick start
+
+You need Docker (Docker Desktop, or Engine + Compose), about 12 GB of disk, and ports 3000, 8000 and 6379 free.
+
+```bash
+git clone https://github.com/JonathanmZhang/Riffscribe.git
+cd Riffscribe
+docker compose up -d --build        # CPU: everything except High quality isolation
+```
+
+To enable **High quality** isolation, use an NVIDIA GPU with about 3 GB of free memory and start the stack with the GPU override instead:
 
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d --build
 ```
 
-The override rebuilds only the `worker-separation` image, with PyTorch's CUDA build and the Mega 53 weights, and gives that service the GPU. This first build downloads about 4 GB more (the CUDA libraries, and a 1.37 GB checkpoint that is cut down to its two guitar stems during the build) and the image takes about 8 GB more disk space. The GPU settings are in a separate file because a GPU reservation stops the whole stack from starting on a computer without NVIDIA's Docker support.
+Open **http://localhost:3000**. To try it, choose **Paste URL** and paste this public-domain clip: `https://upload.wikimedia.org/wikipedia/commons/0/08/Guitar_tabulature_sample.ogg`.
 
-**Without a GPU.** The separation worker checks for a GPU when it starts and reports it at `GET /capabilities`. If High quality can't run, the form shows it disabled, with the reason. Standard still works.
+- **Band recording → turn on Isolate guitar. Solo guitar → leave it off.** On a band mix, other instruments show up as extra notes. On solo guitar there's nothing to remove, and separation adds minutes.
+- **First build:** 5–15 minutes. The worker image is about 5 GB (TensorFlow + PyTorch), and the GPU override adds about 8 GB.
+- **First job:** 30–60 s, even for a short clip, while the models load and librosa compiles. Later jobs are much faster.
+- **Separation speed:** on a 102 s song, Standard took 108–128 s on an 8-thread laptop CPU, and High quality took 164–169 s on a 4 GB GTX 1650. Isolation is limited to 2 minutes of audio, everything else to 5 minutes.
 
-**If High quality fails during a job.** The job isn't failed. If Mega 53 runs out of GPU memory, is killed, or takes longer than `HQ_SEPARATION_TIMEOUT_SECONDS`, the guitar is separated with Demucs instead, and the job's status card and its `separation_note` say so.
+Setup details, every environment variable, the HTTP API and the measurement tools are in [docs/setup.md](docs/setup.md).
 
-**Measured accuracy.** These numbers come from the full-mix benchmark on the `experiment/full-mix-benchmark` branch (`experiments/full_mix/README.md`). It mixes the 12 real guitar performances of [EGSet12](https://zenodo.org/records/11406378) with a backing band and scores the tab against EGSet12's note annotations: recall / precision / F1 of the notes, in percent, with the right pitch within 50 ms.
+## Architecture
 
-| Mix | No separation | Standard (Demucs) | High quality (Mega 53) | The guitar alone, no band |
-|---|---|---|---|---|
-| Clean guitar, louder than the band | 62.5 / 43.7 / 51.4 | 57.8 / 70.1 / 63.4 | 69.8 / 82.2 / 75.5 | 71.9 / 85.2 / 78.0 |
-| Clean guitar, quieter than the band | 55.1 / 31.6 / 40.2 | 49.3 / 62.5 / 55.2 | 67.1 / 80.4 / 73.1 | 71.9 / 85.2 / 78.0 |
-| Distorted guitar, louder than the band | 51.2 / 40.5 / 45.2 | 48.7 / 67.0 / 56.4 | 59.5 / 79.7 / 68.1 | 55.8 / 80.7 / 66.0 |
-| Distorted guitar, quieter than the band | 47.5 / 29.5 / 36.4 | 43.1 / 58.5 / 49.7 | 58.9 / 79.2 / 67.5 | 55.8 / 80.7 / 66.0 |
+```mermaid
+flowchart LR
+    A[ingest<br/>yt-dlp, librosa] --> B{Isolate<br/>guitar?}
+    B -- Standard --> C1[Demucs<br/>CPU]
+    B -- High quality --> C2[Mega 53<br/>GPU subprocess]
+    B -- off --> D
+    C1 --> D[Basic Pitch<br/>notes]
+    C2 --> D
+    D --> E[vibrato merge]
+    E --> F[fretboard mapping<br/>DP + neck position]
+    F --> G[chords<br/>BTC]
+    G --> H[beats<br/>beat_this]
+    H --> I[quantization<br/>16th grid, 4/4 bars]
+    I --> J[MusicXML<br/>notation + TAB]
+```
 
-Read these with their limits in mind:
+This is the logical order. In the code, chords and beats run in the `transcribe` task on the same audio as Basic Pitch. The fretboard mapping, quantization and MusicXML are pure-stdlib modules that the backend re-runs on every read. That's why the neck-position and bar controls apply instantly, without re-transcribing.
 
-- **The band is synthesized.** It is General MIDI drums, bass, pad, electric piano and a "voice oohs" stand-in for a singer, written to play in time and in key with each guitar performance. It is not a real band, and real recordings are probably harder for both separators. There is no ground truth yet for a real full mix.
-- The distorted tone is processed distortion applied to the clean recordings, not a real amplifier.
-- Because the band plays the guitar's own chord tones, a band note that leaks into the stem can count as a correct guitar note. The band alone, with no guitar, matches 9% of the guitar's notes this way. That is why the High quality figures on the distorted tone are slightly above the guitar alone. The effect applies to every column except the last.
-- The stem this pipeline produces was compared with the benchmark's stem for the same mix and is identical, sample for sample.
+| Service | Role |
+|---|---|
+| `frontend` | Next.js 14 + TypeScript. alphaTab renders the score and plays the synth |
+| `backend` | FastAPI. It accepts jobs (`202`), serves results, audio and MusicXML, and applies the display overrides |
+| `worker` | Celery: `ingest_audio → transcribe → map_fretboard`, chained, sharing state through Redis by `job_id` |
+| `worker-separation` | Celery `separate_guitar` on its own queue, one job at a time, optionally on the GPU |
+| `redis` | Valkey 8: Celery broker and job state |
 
-**Measured time and memory**, on a laptop with a 4 GB NVIDIA GeForce GTX 1650 Max-Q and an 8-thread Intel i7-10510U, in Docker Desktop on Windows:
+A job's `status` is always `queued`, `processing`, `done` or `failed`. Every task records its stage and turns any exception into a `failed` status with a clear message.
 
-| Job | Standard | High quality |
+## Results
+
+All numbers are measured on audio with known ground truth. Most come from [EGSet12](#datasets): 12 real electric-guitar performances with note-level annotations, scored as the right pitch within 50 ms. The tones are clean plus moderate and heavy *processed* distortion.
+
+| What | Measured | What it means |
 |---|---|---|
-| A 102 s full-band song, whole job (two runs each) | 127 s, 154 s | 183 s, 199 s |
-| of which separation | 108 s, 128 s | 164 s, 169 s |
-| A 120 s song (the longest allowed), whole job (one run) | not measured | 222 s |
-| of which separation | not measured | 194 s |
-| Peak GPU memory on the 120 s song | none | 2,873 MiB of the card's 4,096 MiB |
+| **Notes**: recall / precision, clean · moderate · heavy | 71.8 / 85.2 · 55.8 / 80.9 · 38.2 / 72.1 | On clean guitar, about 7 in 10 real notes are found, and 85% of the notes shown are real. Distortion costs recall fast. |
+| **Fret positions** (same string and fret as the player, Auto) | 53.3 · 48.3 · 45.4 % | The mapper minimizes hand movement. It doesn't know where the player's hand is, so about half its positions differ from the player's. |
+| **Neck position**, best single window per song (truth's median fret ±3) | 53.3 → 69.3 · 48.3 → 65.8 · 45.4 → 66.1 % | One setting chosen by watching the video fixes much of that. On performance 12 it goes from 21.5 to 86.1%. |
+| **Guitar isolation**, F1 on a full mix (clean guitar quieter than the band) | none 40.2 · Demucs 55.2 · Mega 53 73.1 (guitar alone 78.0) | High quality recovers most of the accuracy the band takes away. Standard helps precision but loses recall. |
+| **Beats**, F-measure (beat_this vs librosa before it) | 70.1 vs 55.3 % (clean) | Noticeably better beats, but fast songs often come out at half tempo. |
+| **Bar lines**, downbeat F (default 4/4 · with the right Tempo/Shift setting) | 50.4 · 68.2 % (clean) | Automatic bar lines are right about half the time. The two buttons fix most of the rest. |
+| **Rhythm**: note starts on the right 16th | 97–98 % | Quantized onsets are reliable. Note lengths are weaker (67–73%). |
+| **Vibrato merge** (IDMT-SMT-Guitar, real vibrato) | 130 false notes removed for 3 real ones | Vibrato no longer turns one note into a stutter of repeats. |
 
-All of these are on a warm stack. The first job after the stack starts is slower (323 s for the 102 s song at High quality). Demucs' speed varies a lot from run to run with other load on the computer. Mega 53 runs in its own process for each job, so the GPU memory is free again when the job's separation ends. Cards with less than 4 GB haven't been tried.
+### Limitations
 
-### Configuration
+- **Bar lines are about 50% right automatically.** Beat slips, half tempo and wrong downbeats need a manual Tempo / Shift.
+- **Heavy distortion is hard.** Recall drops to 38% on heavy processed distortion. Real amp recordings haven't been measured.
+- **Standard tuning only.** Low notes in drop-D and other tunings are dropped as unplayable.
+- **No bend or slide notation.** Basic Pitch splits a bend into separate semitone notes. Detection measured on real playing was too weak to ship (27% recall).
+- **The full-mix benchmark uses a synthesized band** (General MIDI drums, bass, keys, pad), not real recordings. Real mixes are probably harder for both separators.
+- Basic Pitch's own artifacts (phantom harmonics, octave errors) pass through.
 
-You don't need to change anything to run locally: `docker-compose.yml` already sets these to the local values. They matter when you deploy the services separately. The frontend container serves a production build of the app, not a dev server.
+## What I tried that didn't work
 
-| Variable | Service | Default | Purpose |
-|----------|---------|---------|---------|
-| `NEXT_PUBLIC_API_URL` | frontend | `http://localhost:8000` | Base URL of the API |
-| `NEXT_PUBLIC_ENABLE_URL_INGESTION` | frontend | `true` | Set to `false` to hide link submission in the UI (file upload only). The API still accepts URLs. |
-| `CORS_ALLOWED_ORIGINS` | backend | `http://localhost:3000` | Comma-separated list of allowed frontend origins. Wildcards are rejected. |
-| `MAX_AUDIO_DURATION_SECONDS` | worker | `300` | Longest audio accepted |
-| `CHORD_TONE_CONFIDENCE_FLOOR` | worker | `0.45` | Keeps a lower-confidence note (at or above this value) when it starts together with a confident note, so the quieter tones of a strummed chord aren't dropped. Set it to `0.5` or higher to turn this off. |
-| `BASIC_PITCH_ONSET_THRESHOLD` | worker | `0.5` | Basic Pitch's onset threshold. Lower values mostly add false notes. |
-| `BASIC_PITCH_FRAME_THRESHOLD` | worker | `0.4` | Basic Pitch's frame threshold. The library default is 0.3; 0.4 was chosen on the real-guitar benchmark. |
-| `BASIC_PITCH_MIN_NOTE_LENGTH_MS` | worker | `80` | The shortest note Basic Pitch reports. The library default is 128 ms, which is longer than a 16th note at ~120 bpm, so fast passages lost notes. |
-| `DEMUCS_MODEL` | worker-separation | `htdemucs_6s` | Separation model. Must have a guitar stem. Only the default's weights are built into the image. |
-| `DEMUCS_SHIFTS` | worker-separation | `1` | Demucs shift passes. Higher is slightly better and proportionally slower. |
-| `MAX_SEPARATION_DURATION_SECONDS` | worker, worker-separation | `120` | Longest audio accepted with **Isolate guitar**. Longer audio fails during ingest, within seconds and before any processing, with a clear message. |
-| `SEPARATION_SOFT_TIME_LIMIT_SECONDS` | worker-separation | `900` | Time limit for the separation task. The other tasks keep 120 s. |
-| `SEPARATION_TORCH_THREADS` | worker-separation | half the CPUs | CPU threads Demucs may use, so separation doesn't compete with the main worker for every core. |
-| `HQ_SEPARATION_HEAD` | worker-separation (`docker-compose.gpu.yml`) | `guitar` | Which Mega 53 stem is transcribed: `guitar` or `electric-guitar`. They scored the same on the benchmark. |
-| `HQ_SEPARATION_TIMEOUT_SECONDS` | worker-separation (`docker-compose.gpu.yml`) | `420` | A Mega 53 run longer than this is stopped, and the job falls back to Demucs. |
+Each of these was built, measured and rejected. The numbers are in the branches and `experiments/*/README.md`.
 
-The `NEXT_PUBLIC_*` values are built into the frontend at build time, so they're Docker build arguments rather than runtime environment variables. After changing one, rebuild with `docker compose up -d --build frontend`, or redeploy on a host such as Vercel.
+| Approach | Evidence it didn't pay off |
+|---|---|
+| Hand-position fretboard mapper (DP over hand position, tuned with cross-validation) | Held-out position agreement only went from 53.2 to 55.8% on clean and fell on heavy (45.0 → 44.7). It also broke the up-the-neck passages. |
+| Replacing Basic Pitch (MT3, YourMT3+, TabCNN) | MT3 scored F1 75.9 vs 78.0 on clean and took 262 s per song vs 5 s. YourMT3+ reached only 47% recall. |
+| Time-stretching audio to 0.75x before transcription | Clean recall dropped from 76 to 50%, and transcription was about 3x slower. |
+| Merging same-pitch "re-triggers" | Real re-strums look identical on onset and amplitude, so the merge erased real strums. |
+| Gap-based chord splitting for fast changes | No completeness gain: those chords were already losing notes at detection. |
+| Bar phase from chord changes | Every variant scored below beat_this's own downbeats (53.9%). |
+| Glide merge (joining bends and slides) | On real playing it removed 138 false notes but also 44 real ones, and recall fell on every tone. |
+| Snapping notes to the named chord's voicing | No gain on the mapper. |
+| Lower confidence floor for quiet chord tones | Better on synthetic audio, but on real guitar it mostly added octave errors. |
 
-## API
+## Licenses
 
-| Method | Path | Description |
-|--------|------|-------------|
-| `POST` | `/jobs` | Submit a job. Send either `multipart/form-data` with a `file` field (`.mp3`/`.wav`/`.m4a`/`.mp4`/`.webm`/`.mov`, max 200 MB; video files are reduced to their audio track) or JSON `{"url": "..."}`. Add `isolate_guitar` to separate the guitar first: a form field set to `true`, `1` or `on`, or `"isolate_guitar": true` in the JSON. It defaults to off. With it, `separation_quality` chooses the separator: `standard` (the default) or `high`. Returns `202` with `{"job_id": "...", "status": "queued"}`. Invalid input returns `422`. |
-| `GET` | `/jobs/{job_id}` | Returns `{job_id, status, error, result, isolate_guitar, stage, stem_available, separation_quality, separator, separation_note}`. `status` is always one of `queued`, `processing`, `done` or `failed`. `stage` names the running step (`ingesting`, `separating`, `transcribing`, `mapping`). `stem_available` turns true once a guitar stem exists. `separation_quality` is what was asked for, `separator` (`demucs` or `mega53`) is what produced the stem, and `separation_note` explains a fallback to Demucs. `result` is filled in only when `done`, and `error` only when `failed`. Unknown IDs return `404`. |
-| `POST` | `/jobs/{job_id}/rerun` | Starts a new job from the same source audio, by default with `{"isolate_guitar": true, "separation_quality": "standard"}`. Returns `202` like `POST /jobs`; `404` for an unknown job, `409` if its source audio is gone. |
-| `GET` | `/capabilities` | Returns `{"separation": {high_quality_available, high_quality_unavailable_reason, gpu, gpu_memory_mib}}`: whether the separation worker found an NVIDIA GPU and the Mega 53 weights when it started. |
-| `GET` | `/jobs/{job_id}/audio` | Streams the job's normalized WAV (`audio/wav`) and supports Range requests for seeking. Returns `404` if the job doesn't exist or its audio hasn't been produced yet. |
-| `GET` | `/jobs/{job_id}/stem` | Streams the separated guitar stem (44.1 kHz stereo WAV), with Range support. Returns `404` unless the job ran with `isolate_guitar` and separation has finished. |
-
-A finished `result` looks like this:
-
-```json
-{
-  "job_id": "6ea38006-1774-4e5a-aba8-fc8ea2adbf81",
-  "duration_seconds": 97.45,
-  "tempo_bpm": 161,
-  "notes": [
-    { "string": 1, "fret": 5, "start_time": 1.78, "end_time": 2.52, "pitch": "A4", "vibrato": false }
-  ]
-}
-```
-
-Strings are numbered 1 (high e) to 6 (low E). Times are raw seconds.
-
-Example:
-
-```bash
-curl -F "file=@riff.wav" http://localhost:8000/jobs
-curl -H "Content-Type: application/json" -d '{"url": "https://www.youtube.com/watch?v=..."}' http://localhost:8000/jobs
-curl http://localhost:8000/jobs/<job_id>
-```
-
-## Known limitations
-
-Riffscribe v1 has been tested against synthetic test tones, real guitar recordings from Wikimedia Commons, and full songs pulled from YouTube. The limitations below all came up in that testing.
-
-- **Standard tuning only (E A D G B E).** The fretboard model assumes standard tuning. In a song in an alternate tuning such as drop D, the low notes (D2, C2 and so on) don't exist on a standard-tuned fretboard, so they are dropped. On one real drop-tuned song, 37 of 409 detected notes (about 9%) were dropped this way, mostly from the low riff. Detecting or selecting the tuning is not implemented.
-- **Basic Pitch detection artifacts.** On real, messy audio the model occasionally reports phantom harmonic notes (overtones detected as separate notes) and flips sustained notes by an octave. These come from the model's output. Riffscribe maps what Basic Pitch detects and does not try to correct it.
-- **Chord grouping uses a fixed 150 ms onset window.** Notes starting within 150 ms of each other are treated as one chord. The value was tuned empirically against real strums. Very fast runs with sub-150 ms note spacing can be merged into a single chord.
-- **Unplayable notes are dropped, not fatal.** A standalone note outside frets 0–20 is dropped. For a chord that can't be placed on distinct strings, the smallest set of notes that resolves the conflict is dropped. Either way the job still completes and a warning naming the pitch, time and amplitude is logged. The dropped notes are not surfaced in the API response.
-- **Tempo is an estimate.** `tempo_bpm` comes from librosa's beat tracker and is rounded to a whole BPM. It was within 1–4 BPM on plucked-guitar test clips with known tempos of 100 and 140. The tracker relies on percussive onsets, so it is less reliable on solo recordings without drums or a clear pulse, and it can lock onto half or double the tempo you'd tap along to. The UI labels it as approximate. The tab itself is laid out in seconds, not beats or measures.
-- **Audio is capped at 5 minutes.** Recordings longer than `MAX_AUDIO_DURATION_SECONDS` (default 300, set in `docker-compose.yml`) are rejected before any decoding or inference. Because duration isn't known until the audio has been uploaded or downloaded, the check runs in the worker rather than at submission. `POST /jobs` still returns `202`, and the job then moves to `failed` with an error such as `audio is 412 seconds long, which exceeds the 300 second limit`. File uploads are also capped at 200 MB.
-- **The tab grid doesn't auto-scroll** to follow playback. On long songs, the highlighted column can be off-screen until you scroll to it.
-- **Link submission may be turned off on hosted deployments.** A public deployment can hide the "Paste URL" option by setting `NEXT_PUBLIC_ENABLE_URL_INGESTION=false`. The page then says link transcription is available when running locally. Everything works when you run it yourself with `docker compose`.
-
-## Tech stack
-
-- **Backend:** Python 3.11, FastAPI, Pydantic
-- **Task queue:** Celery, with Valkey 8 (a Redis-compatible fork) as broker and job store
-- **Audio / ML:** Spotify Basic Pitch, librosa, pretty_midi, yt-dlp
-- **Fretboard mapping:** custom dynamic-programming (Viterbi-style) algorithm in pure Python
-- **Frontend:** Next.js 14 (App Router), TypeScript, Tailwind CSS
-- **Infrastructure:** Docker Compose
-
-The full design spec is in [`docs/spec.md`](docs/spec.md).
-
-## Chord accuracy tools
-
-Developer scripts for measuring where chord notes get lost. They run inside the worker container and don't touch the pipeline, Celery or Redis. Worker code is built into the image, so rebuild with `docker compose up -d --build worker` after changing them.
-
-- `python -m scripts.make_chord_testset` renders a synthetic test set: 12 strummed standard-tuning voicings plus a fast progression at 4 chords per second, in clean, overdriven and distorted General MIDI guitar. Each program gets a WAV and a ground-truth JSON in `data/_testaudio/chord_testset/`.
-- `python -m scripts.eval_chords [--separate]` runs the test set through each pipeline stage. It reports where every expected note was lost (not detected, below the confidence threshold, grouping, or mapper) along with extra notes, and saves the results as JSON.
-- `python -m scripts.inspect_chords <file> <start_s> <end_s> [--separate] [--expect "G,B,D"]` shows every note event, the grouping and the fretboard mapping for one window of any recording.
-
-The test set is rendered with [FluidSynth](https://www.fluidsynth.org/) and the **FluidR3_GM** General MIDI soundfont by Frank Wen, released under the **MIT license**. Both are installed from Debian packages (`fluidsynth`, `fluid-soundfont-gm`) when the worker image is built, and neither is committed to this repository.
-
-### Real-guitar benchmark (EGSet12)
-
-`python -m scripts.download_egset12` fetches the audio and annotations, then `python -m scripts.egset12_benchmark build` prepares the benchmark in `data/egset12/` (not committed). `regression_check` includes it once it's built. The benchmark:
-
-- cuts the 12 performances into 36 segments, labelled chords, single-note or fast;
-- names every chord in the annotations;
-- renders two **processed-distortion** versions of each performance with [pedalboard](https://github.com/spotify/pedalboard)'s Distortion plugin, at moderate and heavy drive. These are a stand-in for driven tones, not real amplifier recordings.
-
-It reports **pitch** recall and precision (the right note within 50 ms, on any string) and **position** agreement (the same string and fret, among correctly found notes), broken down by tone and segment type.
-
-EGSet12 is by Hegel Pedroza, Wallace Abreu, Ryan Corey and Iran R. Roman, available at [zenodo.org/records/11406378](https://zenodo.org/records/11406378) under the **CC BY 4.0** license. It was introduced in their DAFx 2024 paper, *"Leveraging real electric guitar tones and effects to improve robustness in guitar tablature transcription modeling"*.
-
-## License
-
-Riffscribe's own code is released under the [MIT license](LICENSE). Third-party components keep their own licenses. None of them is vendored into this repository: they're installed from PyPI, npm, Debian or Docker Hub when the images are built, or downloaded at build time.
-
-**Pipeline (used on every job)**
+Riffscribe's own code is [MIT](LICENSE). Third-party components keep their own licenses. They're installed from PyPI, npm, Debian or Docker Hub, or downloaded when the images are built. None is vendored into this repository.
 
 | Component | Used for | License |
 |---|---|---|
-| [Basic Pitch](https://github.com/spotify/basic-pitch) (code and model) | note detection | Apache-2.0 |
-| TensorFlow | runs Basic Pitch | Apache-2.0 |
-| librosa, resampy | audio loading and resampling | ISC |
-| soundfile | WAV I/O | BSD-3-Clause |
-| pretty_midi | MIDI note names | MIT |
-| NumPy, scikit-learn | numerics (librosa/Basic Pitch dependencies) | BSD-3-Clause |
-| [Demucs](https://github.com/facebookresearch/demucs) 4.0.1 (code) | "Isolate guitar", Standard quality | MIT |
-| Demucs `htdemucs_6s` weights | same | **Not MIT.** See [Separator weights](#separator-weights) |
-| [Music-Source-Separation-Training](https://github.com/ZFTurbo/Music-Source-Separation-Training) (code, pinned commit; only with `docker-compose.gpu.yml`) | "Isolate guitar", High quality | MIT |
-| MVSep Mega 53 Stems weights (only with `docker-compose.gpu.yml`) | same | **No license stated.** See [Separator weights](#separator-weights) |
-| PyTorch, torchaudio | runs Demucs, Mega 53, BTC and the beat tracker | BSD-3-Clause |
-| NVIDIA CUDA libraries (bundled in PyTorch's CUDA wheels; only with `docker-compose.gpu.yml`) | GPU inference for Mega 53 | NVIDIA's proprietary license terms |
-| yt-dlp | link ingestion | Unlicense |
-| FFmpeg (Debian package) | decoding video/compressed audio, run as a separate program | GPL (Debian builds with `--enable-gpl`) |
-| Celery | task queue | BSD-3-Clause |
-| [BTC](https://github.com/jayg996/BTC-ISMIR19) (code and large-vocabulary model) | chord names | MIT |
-| redis-py | Redis client | MIT |
-| [Valkey](https://valkey.io/) server (`valkey/valkey:8-alpine` image; a Redis-compatible fork, used in place of Redis 7.4+, which is RSALv2/SSPLv1) | queue broker and job state, run unmodified as a separate service | BSD-3-Clause |
-| FastAPI, Pydantic | API | MIT |
-| Uvicorn | ASGI server | BSD-3-Clause |
-| python-multipart | uploads | Apache-2.0 |
-| Next.js, React | frontend | MIT |
-| Tailwind CSS, TypeScript | frontend build | MIT / Apache-2.0 |
+| [Basic Pitch](https://github.com/spotify/basic-pitch), TensorFlow | note detection | Apache-2.0 |
+| [BTC](https://github.com/jayg996/BTC-ISMIR19) | chord names | MIT |
+| [beat_this](https://github.com/CPJKU/beat_this) | beats and downbeats | MIT |
+| [Demucs](https://github.com/facebookresearch/demucs) (code), [Music-Source-Separation-Training](https://github.com/ZFTurbo/Music-Source-Separation-Training) (code) | guitar isolation | MIT |
+| PyTorch, librosa, soundfile, NumPy | inference and audio I/O | BSD-3-Clause / ISC |
+| [alphaTab](https://github.com/CoderLine/alphaTab) 1.8.4 | score rendering and synth | MPL-2.0 |
+| SONiVOX soundfont · Bravura font (bundled with alphaTab) | synth sound · notation font | Apache-2.0 · SIL OFL |
+| FastAPI, Pydantic, Celery, Next.js, React, Tailwind CSS | app | MIT / BSD-3-Clause |
+| [Valkey](https://valkey.io/) (Redis-compatible) | queue and job state | BSD-3-Clause |
+| yt-dlp · FFmpeg | link ingestion · decoding (run as a separate program) | Unlicense · GPL |
+| NVIDIA CUDA libraries (GPU override only) | Mega 53 on the GPU | NVIDIA proprietary |
 
 ### Separator weights
 
-The trained weights of both guitar separators are **not covered by this repository's MIT license, and this repository does not redistribute them**. Neither file is committed here. Each is downloaded from its publisher when you build the worker image on your own machine, and what you may do with it is governed by its publisher's terms, not by this repository's license.
+**This repository doesn't redistribute either separator's weights, and they aren't covered by its MIT license.** Each is downloaded from its publisher when you build the image, under the publisher's terms:
 
-| Weights | Downloaded from | Stated terms |
+- **Demucs `htdemucs_6s`:** the maintainer states the weights "are not covered by the MIT license, and are provided only for scientific purposes" ([demucs#327](https://github.com/facebookresearch/demucs/issues/327)).
+- **MVSep Mega 53:** a release asset of an MIT repository with no license statement of its own, downloaded from a pinned URL with a pinned SHA-256. The author hasn't confirmed whether the MIT license covers it.
+
+Check both before deploying publicly or commercially. This is a reading of the published terms, not legal advice.
+
+### Datasets
+
+| Dataset | Used for | License |
 |---|---|---|
-| Demucs `htdemucs_6s` (Standard) | Meta's servers, by the `demucs` package, during the image build | The Demucs code is MIT, but its maintainer has said the weights are not: "The model weights are not covered by the MIT license, and are provided only for scientific purposes" ([demucs#327](https://github.com/facebookresearch/demucs/issues/327)). |
-| MVSep Mega 53 Stems (High quality) | The author's [v1.0.21 release](https://github.com/ZFTurbo/Music-Source-Separation-Training/releases/tag/v1.0.21) of Music-Source-Separation-Training, at a pinned URL with a pinned SHA-256 (`worker/Dockerfile`) | The repository's code is MIT. The weights are a release asset with no license statement of their own, and their training data isn't stated. Whether the repository's MIT license covers them hasn't been confirmed by the author. |
+| [EGSet12](https://zenodo.org/records/11406378) (Pedroza, Abreu, Corey, Roman; DAFx 2024) | the note, position, rhythm and full-mix benchmarks; the screenshots | CC BY 4.0 |
+| [IDMT-SMT-Guitar](https://zenodo.org/records/7544110) V2, dataset 2 | vibrato, bend and slide measurements (local use only, not redistributed) | CC BY-NC-ND 4.0 |
+| [Guitar tabulature sample](https://commons.wikimedia.org/wiki/File:Guitar_tabulature_sample.ogg) (Wikimedia Commons) | the try-it clip, early real-audio tests | Public domain |
+| FluidR3_GM soundfont (with FluidSynth, LGPL-2.1) | synthetic chord test set | MIT |
 
-This is a reading of the published terms, not legal advice. If you deploy Riffscribe publicly or use it commercially, check both before enabling **Isolate guitar**.
-
-**Evaluation tooling only (not used by the pipeline)**
-
-| Component | Used for | License |
-|---|---|---|
-| FluidSynth (Debian package) | rendering the synthetic chord test set | LGPL-2.1 |
-| FluidR3_GM soundfont | same | MIT |
-| [pedalboard](https://github.com/spotify/pedalboard) | EGSet12's processed-distortion tones (installed in the worker image) | GPL-3.0 |
-| [EGSet12](https://zenodo.org/records/11406378) | real-guitar benchmark audio and annotations | CC BY 4.0 |
-
-The experiment branches (`experiment/*`) tried further third-party models. Each branch's `experiments/*/README.md` lists their licenses.
+No dataset audio or weights are committed. The benchmark scripts download or render them locally.
