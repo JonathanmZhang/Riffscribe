@@ -7,11 +7,14 @@ from (resolved from the repo's .git, passed in as the "gitmeta" build
 context by docker-compose.yml) and a hash of the worker code in the image
 (tasks/, scripts/, requirements*.txt).
 
-At run time, guard() compares that with the checkout mounted read-only at
-/repo (docker-compose.yml mounts it into both worker services; with a plain
-`docker run`, add -v <repo>:/repo:ro). It prints both at the top of the
-report and exits if the commit or the worker code differs - an old image
-measures old code. --allow-stale runs anyway, with a warning.
+At run time, guard() compares the code hash with the checkout's worker/,
+mounted read-only at /repo (docker-compose.yml mounts it into both worker
+services; with a plain `docker run`, add -v <repo>:/repo:ro). It prints
+both at the top of the report and exits if the worker code differs - an
+old image measures old code. Only the code hash decides: the commits are
+printed for information, so a commit that leaves worker/ alone (docs,
+frontend, backend) doesn't need a worker rebuild. --allow-stale runs
+anyway, with a warning.
 """
 
 import argparse
@@ -53,16 +56,16 @@ def resolve_head(git_dir: str) -> str | None:
 
 def code_hash(root: str) -> str:
     """Hash of the worker code under root (the image's /app, or the repo's
-    worker/): every .py file under tasks/ and scripts/ plus requirements*.txt,
-    by relative path and bytes."""
+    worker/): every .py file under tasks/ and scripts/ plus every
+    requirements*.txt the Dockerfile copies, by relative path and bytes."""
     digest = hashlib.sha1()
     files = []
     for sub in ("tasks", "scripts"):
         for dirpath, dirnames, filenames in os.walk(os.path.join(root, sub)):
             dirnames[:] = sorted(d for d in dirnames if d != "__pycache__")
             files += [os.path.join(dirpath, f) for f in filenames if f.endswith(".py")]
-    files += [os.path.join(root, f) for f in ("requirements.txt", "requirements-separation.txt")
-              if os.path.exists(os.path.join(root, f))]
+    files += [os.path.join(root, f) for f in os.listdir(root)
+              if f.startswith("requirements") and f.endswith(".txt")]
     for path in sorted(files, key=lambda p: os.path.relpath(p, root).replace(os.sep, "/")):
         digest.update(os.path.relpath(path, root).replace(os.sep, "/").encode() + b"\0")
         digest.update(open(path, "rb").read() + b"\0")
@@ -82,7 +85,7 @@ def record() -> dict:
 
 def add_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--allow-stale", action="store_true",
-                        help="run even if the image wasn't built from the current checkout")
+                        help="run even if the image's worker code differs from the checkout's")
 
 
 def guard(allow_stale: bool = False) -> dict:
@@ -96,20 +99,17 @@ def guard(allow_stale: bool = False) -> dict:
                 "code_hash": code_hash(os.path.join(REPO, "worker")) if os.path.isdir(os.path.join(REPO, "worker"))
                 else None}
     problems = []
-    if checkout["commit"] is None:
+    if checkout["code_hash"] is None:
         problems.append(f"no checkout mounted at {REPO} to compare with (add -v <repo>:{REPO}:ro)")
-    else:
-        if built["commit"] != checkout["commit"]:
-            problems.append(f"image built from commit {built['commit'][:10]}, checkout is at {checkout['commit'][:10]}")
-        if built["code_hash"] != checkout["code_hash"]:
-            problems.append("worker code in the image differs from the checkout's worker/ "
-                            "(changed or uncommitted files)")
+    elif built["code_hash"] != checkout["code_hash"]:
+        problems.append(f"worker code in the image (built from commit {built['commit'][:10]}) differs from "
+                        "the checkout's worker/ (changed or uncommitted files)")
     status = "MATCHES checkout" if not problems else ("STALE (--allow-stale)" if allow_stale else "STALE")
     print(f"worker image: commit {built['commit'][:10]}, code {built['code_hash']}, built {built['built_at']}"
           f" | checkout: commit {(checkout['commit'] or 'n/a')[:10]}, code {checkout['code_hash'] or 'n/a'}"
           f" | {status}", flush=True)
     if problems and not allow_stale:
-        fix = "mount the checkout" if checkout["commit"] is None else \
+        fix = "mount the checkout" if checkout["code_hash"] is None else \
             "rebuild with `docker compose up -d --build worker worker-separation`"
         sys.exit("refusing to run: " + "; ".join(problems) + f". To fix, {fix}, or pass --allow-stale.")
     for p in problems:

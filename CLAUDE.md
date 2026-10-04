@@ -186,8 +186,12 @@ stays the fixed four-value enum.
   its worker code (scripts/build_info.py, /app/BUILD_INFO.json; compose
   passes .git as the "gitmeta" build context). regression_check,
   egset12_benchmark, eval_chords, inspect_chords, ab_separation and the
-  experiments/ scripts print it first and refuse to run if it doesn't
-  match the checkout at /repo, unless --allow-stale. With a plain
+  experiments/ scripts print it first and refuse to run if the code hash
+  (tasks/, scripts/, every requirements*.txt) doesn't match the checkout's
+  worker/ at /repo, unless --allow-stale. The commit is printed for
+  information only, so a docs/frontend/backend-only commit doesn't need a
+  worker rebuild (a Dockerfile-only change isn't in the hash: rebuild
+  by hand after one). With a plain
   `docker run`, mount the repo: -v <repo>:/repo:ro. Always rebuild
   before measuring - a stale hand-position image once skewed every
   position number in three experiments.
@@ -504,5 +508,8 @@ rejected approaches, licenses. Setup/config/API detail lives in
 docs/setup.md - keep the README under ~250 lines. Demo video and GIF are
 still placeholders.
 
-NEXT: deployment (Render/Railway for backend+worker, Vercel for
-frontend), then resume bullets locked once a real live link exists.
+The project is LOCAL-ONLY by decision: no deployment is planned (the
+env-driven config above stays, but don't propose hosting it).
+
+NEXT: Record the demo video (~2 min, EGSet12 or public-domain audio
+only), add it and docs/images/demo.gif to the README.
