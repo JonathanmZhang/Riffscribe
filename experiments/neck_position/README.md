@@ -142,8 +142,11 @@ outside.
   choice changes with the neck position, the export can gain or lose a
   note. Measured: 0-2 notes out of 87-641 on six jobs, against Auto's
   export. The tab JSON's notes are identical.
-- **Tab grid:** TabViewer shows one note per string per column. Its
-  grouping (anchored on the first shown note) can differ from the
+- **Tab grid (fixed):** TabViewer shows one note per string per column.
+  Its grouping (anchored on the first shown note) could differ from the
   mapper's (anchored on the first note including dropped ones). On the
-  Short, 2 of 88 notes share a cell with another note at every setting,
-  Auto included. This predates this branch.
+  Short, 2 of 88 notes shared a cell with another note at every setting,
+  Auto included. The backend now sends each note's mapper column and the
+  tab groups by it: the browser test passes 26/26, and on every finished
+  job x Auto / Open / fret 7 (117 runs) each column's notes are on
+  distinct strings.

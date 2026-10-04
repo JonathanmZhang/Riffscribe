@@ -18,6 +18,10 @@ export interface Note {
   // Played with vibrato; a wavy line in the sheet-music view. Missing on
   // jobs finished before vibrato was detected.
   vibrato?: boolean;
+  // The mapper's tab column (backend-derived on every read): notes with the
+  // same column are one chord, on distinct strings. null/missing only for a
+  // job without stored note events.
+  column?: number | null;
 }
 
 // A recognized chord over [start, end) seconds (BTC, in the worker).

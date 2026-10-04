@@ -302,6 +302,22 @@ def _group_into_steps(notes: list[dict]) -> list[list[dict]]:
     return steps
 
 
+def with_columns(mapped: list[dict], note_events: list[dict]) -> list[dict]:
+    """The mapped notes, each with "column": the index of the mapper's
+    group (_group_into_steps over the events it was given) holding it,
+    counting only groups with a placed note. The tab shows one column per
+    index, so its columns are exactly the mapper's - which is what makes a
+    column's notes sit on distinct strings. The grouping anchors on a
+    group's first event, including events later dropped as unplayable, so
+    it can't be recomputed from the placed notes alone. A note not found in
+    the events gets no column."""
+    group_of = {(n["start_time"], n["pitch"]): i for i, group in enumerate(_group_into_steps(note_events))
+                for n in group}
+    groups = [group_of.get((n["start_time"], n["pitch"])) for n in mapped]
+    dense = {g: i for i, g in enumerate(sorted({g for g in groups if g is not None}))}
+    return [{**n, "column": dense[g]} if g is not None else n for n, g in zip(mapped, groups)]
+
+
 def map_notes_to_positions(notes: list[dict], window: NeckWindow | None = None) -> list[dict]:
     """Maps note events onto guitar string/fret positions via dynamic
     programming, per spec 3.5. dp[i][c] = minimum cumulative cost to reach

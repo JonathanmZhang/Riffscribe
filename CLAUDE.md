@@ -290,9 +290,16 @@ stays the fixed four-value enum.
   testing and fixed in both fretboard.py and spec 3.5. Don't reintroduce
   the +2 version.
 - Chord-onset grouping tolerance is 150ms (raised from an initial 50ms
-  after real strum testing showed wider onset spreads), used consistently
-  in both fretboard.py and TabViewer.tsx. This is empirical, not proven
-  optimal — fast riffs with sub-150ms onsets may still misgroup.
+  after real strum testing showed wider onset spreads), in fretmap.py's
+  _group_into_steps. This is empirical, not proven optimal — fast riffs
+  with sub-150ms onsets may still misgroup. The tab shows exactly the
+  mapper's groups: the backend adds a "column" to every result note on read
+  (fretmap.with_columns over the stored raw_note_events, densely numbered;
+  never stored) and TabViewer groups by it. Its own 150ms grouping is only
+  a fallback for notes without one. It used to regroup the placed notes
+  itself, anchored on the first shown note, while the mapper anchors on the
+  first event including ones it later drops; the two disagreed and put two
+  notes in one cell (2 of 88 on the solo Short).
 - Unplayable notes are dropped, not fatal, in two places:
   (1) within a chord, the minimum-conflict-resolving subset of notes is
   dropped (not a greedy lowest-amplitude drop — that was tried first and
@@ -351,9 +358,9 @@ stays the fixed four-value enum.
   identical to re-triggers on onset activation and amplitude, so merging
   erases real strums. (2) splitting/gap-based grouping for fast chord
   changes: no completeness gain, because the affected chords also lose
-  notes at detection/threshold. Backend grouping must stay identical to
-  TabViewer.tsx's (anchor on first note, 150ms) unless the frontend is
-  changed to use a backend-provided step index.
+  notes at detection/threshold. The tab follows the mapper's grouping
+  through each note's backend-provided "column", so a grouping change only
+  has to be made in fretmap.py.
 - Tested and rejected (never merged; branch experiment/time-stretch):
   time-stretching audio to 0.75x/0.5x (Rubber Band R3, pitch kept) before
   Basic Pitch, rescaling note times. Synthetic recall/complete dropped

@@ -202,12 +202,17 @@ def _result_data(job_data: dict) -> dict:
     anything but "auto", the notes are re-mapped from the stored
     raw_note_events (internal, written by transcribe) inside that fret
     window. Same notes, only strings and frets differ. Done per read, like
-    the bars (~10-100ms for a few hundred notes)."""
+    the bars (~10-100ms for a few hundred notes).
+    Every note also gets its tab "column" (fretmap.with_columns: the
+    mapper's own grouping of those events), so the tab shows exactly the
+    mapper's columns."""
     result = job_data["result"]
+    events = job_data.get("raw_note_events")
+    if not events:
+        return result
     window = fretmap.neck_window(job_data.get("neck_position", "auto"))
-    if window is not None and job_data.get("raw_note_events"):
-        result = {**result, "notes": fretmap.map_notes_to_positions(job_data["raw_note_events"], window)}
-    return result
+    notes = result["notes"] if window is None else fretmap.map_notes_to_positions(events, window)
+    return {**result, "notes": fretmap.with_columns(notes, events)}
 
 
 def _status_response(raw: str) -> JobStatusResponse:

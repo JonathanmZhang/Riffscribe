@@ -15,10 +15,12 @@ const STRING_LABELS: Record<number, string> = {
   6: "E",
 };
 
-// Notes starting within this window of each other are shown as one column
-// (a chord). Must match CHORD_ONSET_TOLERANCE_SECONDS in the worker's
-// fretboard.py. 150ms is an empirically-set value based on real strum
-// testing, not a proven optimum - same status as the cost-function constants.
+// Fallback only, for notes without a backend "column" (a job without stored
+// note events): notes starting within this window of the column's first
+// note are one column, as CHORD_ONSET_TOLERANCE_SECONDS in the worker's
+// tasks/fretmap.py. It can differ from the mapper's columns (the mapper
+// also anchors on notes it later dropped), so the column index is used
+// whenever the backend sends one.
 const STEP_TOLERANCE_SECONDS = 0.15;
 
 // Basic Pitch places note onsets slightly after the real attack: on the
@@ -40,9 +42,25 @@ interface TabStep {
   notes: Note[];
 }
 
+// The tab's columns: the mapper's (each note's "column"), so a column's notes
+// are on distinct strings and every note has its own cell. A column starts at
+// its earliest note.
 export function groupIntoSteps(notes: Note[]): TabStep[] {
   const sorted = [...notes].sort((a, b) => a.start_time - b.start_time);
   const steps: TabStep[] = [];
+
+  if (sorted.length > 0 && sorted.every((note) => typeof note.column === "number")) {
+    const byColumn = new Map<number, TabStep>();
+    for (const note of sorted) {
+      const column = note.column as number;
+      const step = byColumn.get(column);
+      if (step) step.notes.push(note);
+      else byColumn.set(column, { time: note.start_time, notes: [note] });
+    }
+    return Array.from(byColumn.entries())
+      .sort(([a], [b]) => a - b)
+      .map(([, step]) => step);
+  }
 
   for (const note of sorted) {
     const last = steps[steps.length - 1];

@@ -195,7 +195,7 @@ Measured in experiments/neck_position/README.md.
   "duration_seconds": 184.2,
   "tempo_bpm": 120,
   "notes": [
-    {"string": 5, "fret": 3, "start_time": 1.24, "end_time": 1.58, "pitch": "C4", "vibrato": false}
+    {"string": 5, "fret": 3, "start_time": 1.24, "end_time": 1.58, "pitch": "C4", "vibrato": false, "column": 0}
   ],
   "chords": [
     {"start": 0.0, "end": 1.3, "name": "E"},
@@ -209,7 +209,11 @@ Measured in experiments/neck_position/README.md.
 Time is stored in raw seconds, not beats/measures, for v1. A note's
 "vibrato" is true when the vibrato merge detected vibrato on it (false on
 jobs finished before it existed); the MusicXML export draws it as a wavy
-line. "chords" are
+line. A note's "column" is the tab column (0, 1, ...) the mapper grouped
+it into (3.5's 150ms chord grouping), so notes with the same column are one
+chord on distinct strings; the tab shows one column per value. Like "bars",
+the backend derives it on every read from the stored note events and never
+stores it (null only for a job without them). "chords" are
 BTC's segments with no-chord stretches left out and repeats merged;
 names are root + suffix ("", m, dim, aug, 6, m6, 7, m7, maj7, m(maj7),
 dim7, m7b5, sus2, sus4), roots spelled with sharps. It's an empty list

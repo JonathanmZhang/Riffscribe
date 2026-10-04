@@ -1,4 +1,4 @@
-from typing import List
+from typing import List, Optional
 
 from pydantic import BaseModel
 
@@ -12,6 +12,11 @@ class Note(BaseModel):
     # Played with vibrato (detected by the worker's vibrato merge); drawn as
     # a wavy line in the MusicXML export.
     vibrato: bool = False
+    # The tab column (0, 1, ...) the mapper placed the note in: notes with
+    # the same column are one chord, on distinct strings. Derived by the
+    # backend on every read (fretmap.with_columns), never stored; None only
+    # for a job without stored note events.
+    column: Optional[int] = None
 
 
 class ChordSegment(BaseModel):
