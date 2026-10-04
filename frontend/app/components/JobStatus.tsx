@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   getJob,
   getJobAudioUrl,
+  getJobMusicXmlUrl,
   getJobStemUrl,
   getSeparationCapabilities,
   rerunJobWithIsolation,
@@ -22,7 +23,8 @@ import {
   type TempoFactor,
 } from "@/app/lib/api";
 import DebugOverlay from "@/app/components/DebugOverlay";
-import SheetMusicView, { type PlaybackPosition } from "@/app/components/SheetMusicView";
+import SheetMusicView, { type PlaybackPosition, type SynthControl } from "@/app/components/SheetMusicView";
+import Transport from "@/app/components/Transport";
 import TabViewer, { groupIntoSteps } from "@/app/components/TabViewer";
 import { readDebugParams } from "@/app/lib/debug";
 
@@ -108,6 +110,9 @@ export default function JobStatus({ jobId, onJobCreated }: JobStatusProps) {
   const [separationNote, setSeparationNote] = useState<string | null>(null);
   const [result, setResult] = useState<TabResult | null>(null);
   const [playbackRate, setPlaybackRate] = useState<number>(1);
+  // 0-1, for every source: the <audio> volume, and a fraction of the synth's
+  // anti-clipping master volume (SheetMusicView).
+  const [volume, setVolume] = useState(1);
   const [view, setView] = useState<"tab" | "sheet">("tab");
   const [source, setSource] = useState<PlaybackSource>("original");
   const [tone, setTone] = useState<PlaybackTone>("clean");
@@ -124,6 +129,8 @@ export default function JobStatus({ jobId, onJobCreated }: JobStatusProps) {
   // Where playback is on the recording's time axis; carried across a change
   // of source so it continues from the same place.
   const positionRef = useRef<PlaybackPosition>({ time: 0, playing: false });
+  // Set by SheetMusicView while the synth is the source; the transport uses it.
+  const synthControlRef = useRef<SynthControl | null>(null);
   const [debug, setDebug] = useState(false);
   useEffect(() => {
     const params = readDebugParams();
@@ -144,6 +151,11 @@ export default function JobStatus({ jobId, onJobCreated }: JobStatusProps) {
     audio.defaultPlaybackRate = playbackRate;
     audio.playbackRate = playbackRate;
   }, [playbackRate, result]);
+
+  // The recordings' volume (the <audio> keeps it across a change of source).
+  useEffect(() => {
+    if (audioRef.current) audioRef.current.volume = volume;
+  }, [volume, result]);
 
   useEffect(() => {
     let cancelled = false;
@@ -267,6 +279,16 @@ export default function JobStatus({ jobId, onJobCreated }: JobStatusProps) {
     }
   };
 
+  // Read out by screen readers when the job moves on (role="status" below).
+  const announcement =
+    status === "done"
+      ? `Transcription done${result ? `: ${result.notes.length} notes` : ""}.`
+      : status === "failed"
+        ? `Transcription failed. ${jobError ?? ""}`
+        : status === "processing"
+          ? (stage ? STAGE_LABELS[stage] : "Processing…")
+          : "Queued.";
+
   const tooLongToIsolate = result !== null && result.duration_seconds > ISOLATION_LIMIT_SECONDS;
   const sources: PlaybackSource[] = view === "sheet" ? ["original", "stem", "synth"] : ["original", "stem"];
 
@@ -279,11 +301,14 @@ export default function JobStatus({ jobId, onJobCreated }: JobStatusProps) {
             className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold ${STATUS_STYLES[status]}`}
           >
             {!TERMINAL_STATUSES.includes(status) && (
-              <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-current" />
+              <span className="h-1.5 w-1.5 rounded-full bg-current motion-safe:animate-pulse" />
             )}
             {status}
           </span>
         </div>
+        <p role="status" className="sr-only">
+          {announcement}
+        </p>
         {status === "processing" && stage && (
           <p className="text-sm font-medium text-indigo-700">
             {STAGE_LABELS[stage]}
@@ -352,18 +377,43 @@ export default function JobStatus({ jobId, onJobCreated }: JobStatusProps) {
             <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500">
               {view === "tab" ? "Tablature" : "Sheet music"}
             </h2>
-            <div role="group" aria-label="View" className="inline-flex rounded-lg bg-slate-100 p-1 text-sm font-medium">
-              {(["tab", "sheet"] as const).map((v) => (
-                <button
-                  key={v}
-                  type="button"
-                  aria-pressed={view === v}
-                  onClick={() => changeView(v)}
-                  className={segmentClass(view === v)}
+            <div className="flex flex-wrap items-center gap-3">
+              {/* The export opens in notation software; the tooltip says
+                  which, on hover and on keyboard focus. */}
+              <div className="group relative">
+                <a
+                  href={getJobMusicXmlUrl(jobId, tone)}
+                  download
+                  aria-describedby="musicxml-tip"
+                  className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 shadow-sm transition-colors hover:bg-slate-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-500"
                 >
-                  {v === "tab" ? "Tab" : "Sheet music"}
-                </button>
-              ))}
+                  <svg viewBox="0 0 20 20" aria-hidden="true" className="h-4 w-4 fill-none stroke-current" strokeWidth="1.8">
+                    <path d="M10 3.5v9m0 0-3.5-3.5M10 12.5l3.5-3.5" strokeLinecap="round" strokeLinejoin="round" />
+                    <path d="M4 13.5v1.75c0 .69.56 1.25 1.25 1.25h9.5c.69 0 1.25-.56 1.25-1.25V13.5" strokeLinecap="round" />
+                  </svg>
+                  Download MusicXML
+                </a>
+                <span
+                  id="musicxml-tip"
+                  role="tooltip"
+                  className="pointer-events-none absolute right-0 top-full z-20 mt-2 whitespace-nowrap rounded-md bg-slate-900 px-2.5 py-1.5 text-xs font-medium text-white opacity-0 shadow-md group-focus-within:opacity-100 group-hover:opacity-100 motion-safe:transition-opacity"
+                >
+                  Open in MuseScore or Guitar Pro
+                </span>
+              </div>
+              <div role="group" aria-label="View" className="inline-flex rounded-lg bg-slate-100 p-1 text-sm font-medium">
+                {(["tab", "sheet"] as const).map((v) => (
+                  <button
+                    key={v}
+                    type="button"
+                    aria-pressed={view === v}
+                    onClick={() => changeView(v)}
+                    className={segmentClass(view === v)}
+                  >
+                    {v === "tab" ? "Tab" : "Sheet music"}
+                  </button>
+                ))}
+              </div>
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
@@ -442,15 +492,17 @@ export default function JobStatus({ jobId, onJobCreated }: JobStatusProps) {
                       : "Guitar only needs a job run with Isolate guitar."}
               </span>
             </div>
-            <audio
-              ref={audioRef}
-              controls
-              src={audioSrc}
-              // Keeps the buttons in sync if the speed is changed from the
-              // browser's native audio-controls menu instead.
-              onRateChange={(event) => setPlaybackRate(event.currentTarget.playbackRate)}
-              // The synth has its own Play button (in the sheet-music view).
-              className={source === "synth" ? "hidden" : "w-full"}
+            {/* The recordings play here; the visible control is the
+                transport, the same for every source and both views. */}
+            <audio ref={audioRef} src={audioSrc} preload="metadata" className="hidden" />
+            <Transport
+              audioRef={audioRef}
+              synth={source === "synth"}
+              positionRef={positionRef}
+              synthControlRef={synthControlRef}
+              fallbackDuration={result.duration_seconds}
+              volume={volume}
+              onVolumeChange={setVolume}
             />
             <div className="flex items-center gap-3 text-sm">
               <span className="text-slate-500">Speed</span>
@@ -480,9 +532,11 @@ export default function JobStatus({ jobId, onJobCreated }: JobStatusProps) {
               barOffsetBeats={barOffsetBeats}
               neckPosition={neckPosition}
               playbackRate={playbackRate}
+              volume={volume}
               playback={source === "synth" ? "synth" : "recording"}
               tone={tone}
               positionRef={positionRef}
+              synthControlRef={synthControlRef}
               onOverrides={applyOverrides}
             />
           )}

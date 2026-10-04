@@ -208,6 +208,27 @@ stays the fixed four-value enum.
   overflows (its loadedMidiInfo getter calls itself) - don't use that
   event in synth mode. ?debug=1&src=stem only preselects Guitar only now;
   with ?debug=1, window.riffscribePosition is the hand-off ref.
+- Transport (components/Transport.tsx): the one visible player for every
+  source and both views - Play/Pause (aria-label switches), time on the
+  recording's axis and a seek slider. The <audio> has no native controls
+  (always hidden); the synth is driven through SheetMusicView's
+  synthControlRef (toggle / seek / ready). The transport polls its own
+  state every 100ms so the big tab table doesn't re-render while playing.
+  A tone or bar reload pauses the synth before alphaTab rewinds it, then
+  the hand-off resumes it (no audible jump to the start). Volume slider
+  (0-1, JobStatus state): the <audio>'s volume, and the synth's
+  masterVolume = SYNTH_MASTER_VOLUME (0.4) x volume, so the anti-clipping
+  headroom stays. alphaTab's external-media handler ignores masterVolume
+  writes, so loading the sheet view can't reset the recording to 1.
+- Accessibility floor kept by the design pass (feature/design-pass): small
+  text on slate-100/slate-50 is slate-600 or darker (slate-500 there is
+  4.34:1); empty tab cells draw their dash in CSS (td[data-empty]::before),
+  not as text; the tab grid, note list and score scroll areas are
+  focusable regions with labels; the job card has a role="status"
+  announcement; motion respects prefers-reduced-motion (status pulse,
+  tab follow easing, alphaTab's animated cursor and score scrolling).
+  "Download MusicXML" (with the current tone) sits next to the view
+  toggle. Check with the axe pass in data/_screenshots/design_audit.
 - Frontend has a light Tailwind polish pass done (colors, layout, status
   badges, sticky grid headers) but no real design system yet — a Figma
   pass is planned later. Don't over-invest further in visual redesign
