@@ -2,7 +2,14 @@
 
 import { type MutableRefObject, type RefObject, useEffect, useRef, useState } from "react";
 import type * as AlphaTab from "@coderline/alphatab";
-import { getJobMusicXmlUrl, type BarOffsetBeats, type PlaybackTone, type TempoFactor } from "@/app/lib/api";
+import {
+  getJobMusicXmlUrl,
+  type BarOffsetBeats,
+  type JobOverrides,
+  type NeckPosition,
+  type PlaybackTone,
+  type TempoFactor,
+} from "@/app/lib/api";
 import { readDebugParams } from "@/app/lib/debug";
 
 // alphaTab (MPL-2.0) renders the job's MusicXML export: standard notation +
@@ -66,12 +73,15 @@ interface SheetMusicViewProps {
   bars: number[];
   tempoFactor: TempoFactor;
   barOffsetBeats: BarOffsetBeats;
+  // Reloads the score when it changes: the TAB staff's strings and frets
+  // follow the job's neck position (the bars don't change with it).
+  neckPosition: NeckPosition;
   playbackRate: number;
   playback: SheetPlayback;
   // Synth only: sets the export's MIDI program, which alphaTab's synth plays.
   tone: PlaybackTone;
   positionRef: MutableRefObject<PlaybackPosition>;
-  onOverrides: (overrides: { tempo_factor?: TempoFactor; bar_offset_beats?: BarOffsetBeats }) => Promise<void>;
+  onOverrides: (overrides: JobOverrides) => Promise<void>;
 }
 
 const buttonClass =
@@ -85,6 +95,7 @@ export default function SheetMusicView({
   bars,
   tempoFactor,
   barOffsetBeats,
+  neckPosition,
   playbackRate,
   playback,
   tone,
@@ -304,7 +315,7 @@ export default function SheetMusicView({
   }, [playback, audioRef, positionRef]);
 
   // (Re)load the score: on mount, on a playback-mode or tone switch and
-  // after an override changes (bars differ). Nothing is re-transcribed; the
+  // after an override changes (bars or neck position differ). Nothing is re-transcribed; the
   // backend rebuilds the MusicXML from the stored notes. The tone is the
   // export's MIDI program, which alphaTab's synth then plays.
   const barsKey = bars.join(",");
@@ -328,13 +339,13 @@ export default function SheetMusicView({
     return () => {
       cancelled = true;
     };
-  }, [jobId, playback, barsKey, tone]);
+  }, [jobId, playback, barsKey, tone, neckPosition]);
 
   useEffect(() => {
     if (apiRef.current && playback === "synth") apiRef.current.playbackSpeed = playbackRate;
   }, [playbackRate, playback, playerReady]);
 
-  const applyOverrides = async (overrides: { tempo_factor?: TempoFactor; bar_offset_beats?: BarOffsetBeats }) => {
+  const applyOverrides = async (overrides: JobOverrides) => {
     setUpdating(true);
     try {
       await onOverrides(overrides);

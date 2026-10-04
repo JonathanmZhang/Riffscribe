@@ -33,10 +33,13 @@ condensed, enforceable rules Claude Code should follow every session.
   high_quality_unavailable_reason, gpu, gpu_memory_mib}}, from the Redis
   key separation:capabilities that worker-separation writes at its start.
 - PATCH /jobs/{job_id} — {tempo_factor?: 0.5|1|2, bar_offset_beats?:
-  0-3}, finished jobs only (409 otherwise); never re-transcribes. GET
-  /jobs/{id} also returns both overrides. result.bars = start time of each
-  MusicXML measure (rhythm.measure_starts), derived by the backend on
-  every read, never stored.
+  0-3, neck_position?: "auto"|"open"|1-17}, finished jobs only (409
+  otherwise); never re-transcribes. GET /jobs/{id} also returns all three
+  overrides. result.bars = start time of each MusicXML measure
+  (rhythm.measure_starts), derived by the backend on every read, never
+  stored. A neck_position other than "auto" re-maps the stored
+  raw_note_events in that fret window on every read (GET and the
+  MusicXML): result.notes' strings/frets change, the notes never do.
 - GET /jobs/{job_id}/musicxml — MusicXML 4.0 (notation + TAB, 4/4,
   quantized, chord symbols), built per request by the backend with the
   job's overrides. 404 unless done. Optional ?tone=clean | overdriven |
@@ -148,10 +151,28 @@ stays the fixed four-value enum.
   bars are 49-50% downbeat F, a bit under beat_this's irregular downbeats;
   the overrides reach 61-68%. Validate exports with
   experiments/musicxml/validate.py (XSD + music21, throwaway container).
+- Fretboard mapper: worker/tasks/fretmap.py, PURE STDLIB like rhythm.py /
+  musicxml.py (copied into the backend the same way; rebuild both when it
+  changes); tasks/fretboard.py is only the map_fretboard Celery task and
+  re-exports the mapper for the scripts. fretmap logs under
+  "tasks.fretboard" (the scripts silence/capture that name; the backend
+  sets it to ERROR so re-mapping on read doesn't repeat the worker's drop
+  warnings). Neck position (feature/neck-position,
+  experiments/neck_position/README.md): neck_window() = None for "auto"
+  (the old mapper, verified bit-identical on 71 inputs), (0, 4) for
+  "open", (max(1, N-3), N+3) for N. Singles are limited to in-window
+  positions, or the nearest if none fit; chords get several in-window
+  voicings for the DP. Drops are decided before the window, so the notes
+  are identical for every setting. EGSet12 best case (truth median fret
+  +-3) position agreement: clean 53.3 -> 69.3, moderate 48.3 -> 65.8, heavy
+  45.4 -> 66.1. It hurts a player who moves around (performance 01: 60.0 ->
+  46.7). Because the export's quantizer drops a note on the same 16th AND
+  string as another, the MusicXML can differ by 0-2 notes between
+  settings.
 - Pure, Redis/Celery-free helpers for scripts: tasks/audio_io.py
   (job_dir, probe_duration_seconds, normalize_to_wav),
   transcribe.extract_notes, separate.separate_guitar_stem,
-  fretboard.map_notes_to_positions, beats.track_beats.
+  fretmap.map_notes_to_positions (also via fretboard), beats.track_beats.
   scripts/ab_separation.py uses them.
 - Worker code is NOT volume-mounted: tasks/ and scripts/ are both
   COPY'd into the image, so ANY change under worker/ needs a rebuild

@@ -47,6 +47,19 @@ export interface TabResult {
 // beats; bar_offset_beats moves the bar lines later by 0-3 beats.
 export type TempoFactor = 0.5 | 1 | 2;
 export type BarOffsetBeats = 0 | 1 | 2 | 3;
+// Where on the neck the notes are placed (also PATCH /jobs/{id}): "auto" is
+// the mapper's own choice, "open" frets 0-4 with open strings, a number N
+// frets N-3..N+3 (NECK_HALF_WIDTH) without open strings. Same notes either
+// way; only strings and frets change.
+export type NeckPosition = "auto" | "open" | number;
+export const NECK_HALF_WIDTH = 3;
+export const NECK_CENTRES = Array.from({ length: 17 }, (_, i) => i + 1);
+
+export interface JobOverrides {
+  tempo_factor?: TempoFactor;
+  bar_offset_beats?: BarOffsetBeats;
+  neck_position?: NeckPosition;
+}
 
 export interface JobCreateResponse {
   job_id: string;
@@ -77,6 +90,7 @@ export interface JobStatusResponse {
   separation_note: string | null;
   tempo_factor: TempoFactor;
   bar_offset_beats: BarOffsetBeats;
+  neck_position: NeckPosition;
 }
 
 async function parseOrThrow<T>(response: Response): Promise<T> {
@@ -159,11 +173,9 @@ export async function rerunJobWithIsolation(
   return parseOrThrow<JobCreateResponse>(response);
 }
 
-// Finished jobs only; recomputes the bars without re-transcribing.
-export async function setJobOverrides(
-  jobId: string,
-  overrides: { tempo_factor?: TempoFactor; bar_offset_beats?: BarOffsetBeats },
-): Promise<JobStatusResponse> {
+// Finished jobs only; recomputes the bars / note positions without
+// re-transcribing.
+export async function setJobOverrides(jobId: string, overrides: JobOverrides): Promise<JobStatusResponse> {
   const response = await fetch(`${API_BASE_URL}/jobs/${jobId}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },

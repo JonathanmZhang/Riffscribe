@@ -1,0 +1,888 @@
+{
+  "per_tone": {
+    "clean": {
+      "auto": {
+        "single-note": {
+          "truth": 534,
+          "tab": 553,
+          "matched": 476,
+          "position": 236,
+          "pitch_recall": 89.1,
+          "pitch_precision": 86.1,
+          "position_agreement": 49.6
+        },
+        "all": {
+          "truth": 1567,
+          "tab": 1320,
+          "matched": 1125,
+          "position": 600,
+          "pitch_recall": 71.8,
+          "pitch_precision": 85.2,
+          "position_agreement": 53.3
+        },
+        "chords": {
+          "truth": 950,
+          "tab": 704,
+          "matched": 588,
+          "position": 349,
+          "pitch_recall": 61.9,
+          "pitch_precision": 83.5,
+          "position_agreement": 59.4
+        },
+        "fast": {
+          "truth": 83,
+          "tab": 63,
+          "matched": 61,
+          "position": 15,
+          "pitch_recall": 73.5,
+          "pitch_precision": 96.8,
+          "position_agreement": 24.6
+        }
+      },
+      "median +- 3": {
+        "single-note": {
+          "truth": 534,
+          "tab": 553,
+          "matched": 476,
+          "position": 319,
+          "pitch_recall": 89.1,
+          "pitch_precision": 86.1,
+          "position_agreement": 67.0
+        },
+        "all": {
+          "truth": 1567,
+          "tab": 1320,
+          "matched": 1125,
+          "position": 780,
+          "pitch_recall": 71.8,
+          "pitch_precision": 85.2,
+          "position_agreement": 69.3
+        },
+        "chords": {
+          "truth": 950,
+          "tab": 704,
+          "matched": 588,
+          "position": 421,
+          "pitch_recall": 61.9,
+          "pitch_precision": 83.5,
+          "position_agreement": 71.6
+        },
+        "fast": {
+          "truth": 83,
+          "tab": 63,
+          "matched": 61,
+          "position": 40,
+          "pitch_recall": 73.5,
+          "pitch_precision": 96.8,
+          "position_agreement": 65.6
+        }
+      },
+      "median +- 2": {
+        "single-note": {
+          "truth": 534,
+          "tab": 553,
+          "matched": 476,
+          "position": 311,
+          "pitch_recall": 89.1,
+          "pitch_precision": 86.1,
+          "position_agreement": 65.3
+        },
+        "all": {
+          "truth": 1567,
+          "tab": 1320,
+          "matched": 1125,
+          "position": 778,
+          "pitch_recall": 71.8,
+          "pitch_precision": 85.2,
+          "position_agreement": 69.2
+        },
+        "chords": {
+          "truth": 950,
+          "tab": 704,
+          "matched": 588,
+          "position": 433,
+          "pitch_recall": 61.9,
+          "pitch_precision": 83.5,
+          "position_agreement": 73.6
+        },
+        "fast": {
+          "truth": 83,
+          "tab": 63,
+          "matched": 61,
+          "position": 34,
+          "pitch_recall": 73.5,
+          "pitch_precision": 96.8,
+          "position_agreement": 55.7
+        }
+      },
+      "best UI setting": {
+        "single-note": {
+          "truth": 534,
+          "tab": 553,
+          "matched": 476,
+          "position": 341,
+          "pitch_recall": 89.1,
+          "pitch_precision": 86.1,
+          "position_agreement": 71.6
+        },
+        "all": {
+          "truth": 1567,
+          "tab": 1320,
+          "matched": 1125,
+          "position": 822,
+          "pitch_recall": 71.8,
+          "pitch_precision": 85.2,
+          "position_agreement": 73.1
+        },
+        "chords": {
+          "truth": 950,
+          "tab": 704,
+          "matched": 588,
+          "position": 441,
+          "pitch_recall": 61.9,
+          "pitch_precision": 83.5,
+          "position_agreement": 75.0
+        },
+        "fast": {
+          "truth": 83,
+          "tab": 63,
+          "matched": 61,
+          "position": 40,
+          "pitch_recall": 73.5,
+          "pitch_precision": 96.8,
+          "position_agreement": 65.6
+        }
+      }
+    },
+    "moderate": {
+      "auto": {
+        "single-note": {
+          "truth": 534,
+          "tab": 544,
+          "matched": 442,
+          "position": 203,
+          "pitch_recall": 82.8,
+          "pitch_precision": 81.2,
+          "position_agreement": 45.9
+        },
+        "all": {
+          "truth": 1567,
+          "tab": 1080,
+          "matched": 874,
+          "position": 422,
+          "pitch_recall": 55.8,
+          "pitch_precision": 80.9,
+          "position_agreement": 48.3
+        },
+        "chords": {
+          "truth": 950,
+          "tab": 476,
+          "matched": 373,
+          "position": 204,
+          "pitch_recall": 39.3,
+          "pitch_precision": 78.4,
+          "position_agreement": 54.7
+        },
+        "fast": {
+          "truth": 83,
+          "tab": 60,
+          "matched": 59,
+          "position": 15,
+          "pitch_recall": 71.1,
+          "pitch_precision": 98.3,
+          "position_agreement": 25.4
+        }
+      },
+      "median +- 3": {
+        "single-note": {
+          "truth": 534,
+          "tab": 544,
+          "matched": 442,
+          "position": 288,
+          "pitch_recall": 82.8,
+          "pitch_precision": 81.2,
+          "position_agreement": 65.2
+        },
+        "all": {
+          "truth": 1567,
+          "tab": 1080,
+          "matched": 874,
+          "position": 575,
+          "pitch_recall": 55.8,
+          "pitch_precision": 80.9,
+          "position_agreement": 65.8
+        },
+        "chords": {
+          "truth": 950,
+          "tab": 476,
+          "matched": 373,
+          "position": 247,
+          "pitch_recall": 39.3,
+          "pitch_precision": 78.4,
+          "position_agreement": 66.2
+        },
+        "fast": {
+          "truth": 83,
+          "tab": 60,
+          "matched": 59,
+          "position": 40,
+          "pitch_recall": 71.1,
+          "pitch_precision": 98.3,
+          "position_agreement": 67.8
+        }
+      },
+      "median +- 2": {
+        "single-note": {
+          "truth": 534,
+          "tab": 544,
+          "matched": 442,
+          "position": 279,
+          "pitch_recall": 82.8,
+          "pitch_precision": 81.2,
+          "position_agreement": 63.1
+        },
+        "all": {
+          "truth": 1567,
+          "tab": 1080,
+          "matched": 874,
+          "position": 573,
+          "pitch_recall": 55.8,
+          "pitch_precision": 80.9,
+          "position_agreement": 65.6
+        },
+        "chords": {
+          "truth": 950,
+          "tab": 476,
+          "matched": 373,
+          "position": 261,
+          "pitch_recall": 39.3,
+          "pitch_precision": 78.4,
+          "position_agreement": 70.0
+        },
+        "fast": {
+          "truth": 83,
+          "tab": 60,
+          "matched": 59,
+          "position": 33,
+          "pitch_recall": 71.1,
+          "pitch_precision": 98.3,
+          "position_agreement": 55.9
+        }
+      },
+      "best UI setting": {
+        "single-note": {
+          "truth": 534,
+          "tab": 544,
+          "matched": 442,
+          "position": 310,
+          "pitch_recall": 82.8,
+          "pitch_precision": 81.2,
+          "position_agreement": 70.1
+        },
+        "all": {
+          "truth": 1567,
+          "tab": 1080,
+          "matched": 874,
+          "position": 620,
+          "pitch_recall": 55.8,
+          "pitch_precision": 80.9,
+          "position_agreement": 70.9
+        },
+        "chords": {
+          "truth": 950,
+          "tab": 476,
+          "matched": 373,
+          "position": 270,
+          "pitch_recall": 39.3,
+          "pitch_precision": 78.4,
+          "position_agreement": 72.4
+        },
+        "fast": {
+          "truth": 83,
+          "tab": 60,
+          "matched": 59,
+          "position": 40,
+          "pitch_recall": 71.1,
+          "pitch_precision": 98.3,
+          "position_agreement": 67.8
+        }
+      }
+    },
+    "heavy": {
+      "auto": {
+        "single-note": {
+          "truth": 534,
+          "tab": 518,
+          "matched": 394,
+          "position": 176,
+          "pitch_recall": 73.8,
+          "pitch_precision": 76.1,
+          "position_agreement": 44.7
+        },
+        "all": {
+          "truth": 1567,
+          "tab": 831,
+          "matched": 599,
+          "position": 272,
+          "pitch_recall": 38.2,
+          "pitch_precision": 72.1,
+          "position_agreement": 45.4
+        },
+        "chords": {
+          "truth": 950,
+          "tab": 268,
+          "matched": 162,
+          "position": 82,
+          "pitch_recall": 17.1,
+          "pitch_precision": 60.4,
+          "position_agreement": 50.6
+        },
+        "fast": {
+          "truth": 83,
+          "tab": 45,
+          "matched": 43,
+          "position": 14,
+          "pitch_recall": 51.8,
+          "pitch_precision": 95.6,
+          "position_agreement": 32.6
+        }
+      },
+      "median +- 3": {
+        "single-note": {
+          "truth": 534,
+          "tab": 518,
+          "matched": 394,
+          "position": 264,
+          "pitch_recall": 73.8,
+          "pitch_precision": 76.1,
+          "position_agreement": 67.0
+        },
+        "all": {
+          "truth": 1567,
+          "tab": 831,
+          "matched": 599,
+          "position": 396,
+          "pitch_recall": 38.2,
+          "pitch_precision": 72.1,
+          "position_agreement": 66.1
+        },
+        "chords": {
+          "truth": 950,
+          "tab": 268,
+          "matched": 162,
+          "position": 107,
+          "pitch_recall": 17.1,
+          "pitch_precision": 60.4,
+          "position_agreement": 66.0
+        },
+        "fast": {
+          "truth": 83,
+          "tab": 45,
+          "matched": 43,
+          "position": 25,
+          "pitch_recall": 51.8,
+          "pitch_precision": 95.6,
+          "position_agreement": 58.1
+        }
+      },
+      "median +- 2": {
+        "single-note": {
+          "truth": 534,
+          "tab": 518,
+          "matched": 394,
+          "position": 255,
+          "pitch_recall": 73.8,
+          "pitch_precision": 76.1,
+          "position_agreement": 64.7
+        },
+        "all": {
+          "truth": 1567,
+          "tab": 831,
+          "matched": 599,
+          "position": 394,
+          "pitch_recall": 38.2,
+          "pitch_precision": 72.1,
+          "position_agreement": 65.8
+        },
+        "chords": {
+          "truth": 950,
+          "tab": 268,
+          "matched": 162,
+          "position": 116,
+          "pitch_recall": 17.1,
+          "pitch_precision": 60.4,
+          "position_agreement": 71.6
+        },
+        "fast": {
+          "truth": 83,
+          "tab": 45,
+          "matched": 43,
+          "position": 23,
+          "pitch_recall": 51.8,
+          "pitch_precision": 95.6,
+          "position_agreement": 53.5
+        }
+      },
+      "best UI setting": {
+        "single-note": {
+          "truth": 534,
+          "tab": 518,
+          "matched": 394,
+          "position": 279,
+          "pitch_recall": 73.8,
+          "pitch_precision": 76.1,
+          "position_agreement": 70.8
+        },
+        "all": {
+          "truth": 1567,
+          "tab": 831,
+          "matched": 599,
+          "position": 430,
+          "pitch_recall": 38.2,
+          "pitch_precision": 72.1,
+          "position_agreement": 71.8
+        },
+        "chords": {
+          "truth": 950,
+          "tab": 268,
+          "matched": 162,
+          "position": 126,
+          "pitch_recall": 17.1,
+          "pitch_precision": 60.4,
+          "position_agreement": 77.8
+        },
+        "fast": {
+          "truth": 83,
+          "tab": 45,
+          "matched": 43,
+          "position": 25,
+          "pitch_recall": 51.8,
+          "pitch_precision": 95.6,
+          "position_agreement": 58.1
+        }
+      }
+    }
+  },
+  "per_performance": [
+    {
+      "performance": "01",
+      "median_fret": 5,
+      "window": [
+        2,
+        8
+      ],
+      "truth_in_window": 45.7,
+      "tones": {
+        "clean": {
+          "auto": 60.0,
+          "median +- 3": 46.7,
+          "median +- 2": 48.9,
+          "best UI setting": 58.9,
+          "best_ui": 3,
+          "matched": 90
+        },
+        "moderate": {
+          "auto": 54.3,
+          "median +- 3": 44.4,
+          "median +- 2": 45.7,
+          "best UI setting": 60.5,
+          "best_ui": 3,
+          "matched": 81
+        },
+        "heavy": {
+          "auto": 44.0,
+          "median +- 3": 54.0,
+          "median +- 2": 54.0,
+          "best UI setting": 62.0,
+          "best_ui": 3,
+          "matched": 50
+        }
+      }
+    },
+    {
+      "performance": "02",
+      "median_fret": 5,
+      "window": [
+        2,
+        8
+      ],
+      "truth_in_window": 68.2,
+      "tones": {
+        "clean": {
+          "auto": 57.6,
+          "median +- 3": 74.3,
+          "median +- 2": 87.5,
+          "best UI setting": 87.5,
+          "best_ui": 6,
+          "matched": 144
+        },
+        "moderate": {
+          "auto": 34.1,
+          "median +- 3": 67.1,
+          "median +- 2": 85.9,
+          "best UI setting": 83.5,
+          "best_ui": 6,
+          "matched": 85
+        },
+        "heavy": {
+          "auto": 35.4,
+          "median +- 3": 64.6,
+          "median +- 2": 84.6,
+          "best UI setting": 90.8,
+          "best_ui": 9,
+          "matched": 65
+        }
+      }
+    },
+    {
+      "performance": "03",
+      "median_fret": 6,
+      "window": [
+        3,
+        9
+      ],
+      "truth_in_window": 93.6,
+      "tones": {
+        "clean": {
+          "auto": 96.7,
+          "median +- 3": 100.0,
+          "median +- 2": 85.2,
+          "best UI setting": 100.0,
+          "best_ui": 6,
+          "matched": 61
+        },
+        "moderate": {
+          "auto": 76.6,
+          "median +- 3": 91.5,
+          "median +- 2": 78.7,
+          "best UI setting": 95.7,
+          "best_ui": 5,
+          "matched": 47
+        },
+        "heavy": {
+          "auto": 65.5,
+          "median +- 3": 89.7,
+          "median +- 2": 86.2,
+          "best UI setting": 89.7,
+          "best_ui": 6,
+          "matched": 29
+        }
+      }
+    },
+    {
+      "performance": "04",
+      "median_fret": 8,
+      "window": [
+        5,
+        11
+      ],
+      "truth_in_window": 89.4,
+      "tones": {
+        "clean": {
+          "auto": 29.8,
+          "median +- 3": 53.7,
+          "median +- 2": 49.6,
+          "best UI setting": 53.7,
+          "best_ui": 8,
+          "matched": 121
+        },
+        "moderate": {
+          "auto": 32.1,
+          "median +- 3": 58.9,
+          "median +- 2": 50.9,
+          "best UI setting": 58.9,
+          "best_ui": 8,
+          "matched": 112
+        },
+        "heavy": {
+          "auto": 30.2,
+          "median +- 3": 57.1,
+          "median +- 2": 55.6,
+          "best UI setting": 57.1,
+          "best_ui": 8,
+          "matched": 63
+        }
+      }
+    },
+    {
+      "performance": "05",
+      "median_fret": 5,
+      "window": [
+        2,
+        8
+      ],
+      "truth_in_window": 55.9,
+      "tones": {
+        "clean": {
+          "auto": 41.1,
+          "median +- 3": 55.8,
+          "median +- 2": 57.9,
+          "best UI setting": 64.2,
+          "best_ui": 4,
+          "matched": 95
+        },
+        "moderate": {
+          "auto": 35.6,
+          "median +- 3": 55.6,
+          "median +- 2": 58.9,
+          "best UI setting": 64.4,
+          "best_ui": 4,
+          "matched": 90
+        },
+        "heavy": {
+          "auto": 41.0,
+          "median +- 3": 61.5,
+          "median +- 2": 56.4,
+          "best UI setting": 67.9,
+          "best_ui": 4,
+          "matched": 78
+        }
+      }
+    },
+    {
+      "performance": "06",
+      "median_fret": 0,
+      "window": [
+        0,
+        3
+      ],
+      "truth_in_window": 83.8,
+      "tones": {
+        "clean": {
+          "auto": 79.7,
+          "median +- 3": 79.1,
+          "median +- 2": 79.1,
+          "best UI setting": 79.1,
+          "best_ui": "open",
+          "matched": 172
+        },
+        "moderate": {
+          "auto": 78.4,
+          "median +- 3": 77.0,
+          "median +- 2": 77.0,
+          "best UI setting": 77.0,
+          "best_ui": "open",
+          "matched": 74
+        },
+        "heavy": {
+          "auto": 58.8,
+          "median +- 3": 58.8,
+          "median +- 2": 58.8,
+          "best UI setting": 70.6,
+          "best_ui": 3,
+          "matched": 17
+        }
+      }
+    },
+    {
+      "performance": "07",
+      "median_fret": 5,
+      "window": [
+        2,
+        8
+      ],
+      "truth_in_window": 70.3,
+      "tones": {
+        "clean": {
+          "auto": 44.3,
+          "median +- 3": 67.2,
+          "median +- 2": 62.3,
+          "best UI setting": 67.2,
+          "best_ui": 5,
+          "matched": 61
+        },
+        "moderate": {
+          "auto": 41.0,
+          "median +- 3": 59.0,
+          "median +- 2": 54.1,
+          "best UI setting": 59.0,
+          "best_ui": 5,
+          "matched": 61
+        },
+        "heavy": {
+          "auto": 44.6,
+          "median +- 3": 62.5,
+          "median +- 2": 57.1,
+          "best UI setting": 64.3,
+          "best_ui": 2,
+          "matched": 56
+        }
+      }
+    },
+    {
+      "performance": "08",
+      "median_fret": 8,
+      "window": [
+        5,
+        11
+      ],
+      "truth_in_window": 63.1,
+      "tones": {
+        "clean": {
+          "auto": 46.3,
+          "median +- 3": 82.9,
+          "median +- 2": 78.0,
+          "best UI setting": 82.9,
+          "best_ui": 8,
+          "matched": 82
+        },
+        "moderate": {
+          "auto": 55.6,
+          "median +- 3": 77.8,
+          "median +- 2": 76.2,
+          "best UI setting": 79.4,
+          "best_ui": 9,
+          "matched": 63
+        },
+        "heavy": {
+          "auto": 57.7,
+          "median +- 3": 84.6,
+          "median +- 2": 76.9,
+          "best UI setting": 84.6,
+          "best_ui": 8,
+          "matched": 26
+        }
+      }
+    },
+    {
+      "performance": "09",
+      "median_fret": 12,
+      "window": [
+        9,
+        15
+      ],
+      "truth_in_window": 52.8,
+      "tones": {
+        "clean": {
+          "auto": 32.5,
+          "median +- 3": 50.0,
+          "median +- 2": 46.2,
+          "best UI setting": 53.8,
+          "best_ui": 11,
+          "matched": 80
+        },
+        "moderate": {
+          "auto": 37.3,
+          "median +- 3": 50.7,
+          "median +- 2": 47.8,
+          "best UI setting": 56.7,
+          "best_ui": 11,
+          "matched": 67
+        },
+        "heavy": {
+          "auto": 33.3,
+          "median +- 3": 54.2,
+          "median +- 2": 52.1,
+          "best UI setting": 62.5,
+          "best_ui": 11,
+          "matched": 48
+        }
+      }
+    },
+    {
+      "performance": "10",
+      "median_fret": 0,
+      "window": [
+        0,
+        3
+      ],
+      "truth_in_window": 100.0,
+      "tones": {
+        "clean": {
+          "auto": 95.0,
+          "median +- 3": 95.0,
+          "median +- 2": 95.0,
+          "best UI setting": 95.0,
+          "best_ui": "open",
+          "matched": 60
+        },
+        "moderate": {
+          "auto": 100.0,
+          "median +- 3": 100.0,
+          "median +- 2": 100.0,
+          "best UI setting": 100.0,
+          "best_ui": "open",
+          "matched": 60
+        },
+        "heavy": {
+          "auto": 100.0,
+          "median +- 3": 100.0,
+          "median +- 2": 100.0,
+          "best UI setting": 100.0,
+          "best_ui": "open",
+          "matched": 58
+        }
+      }
+    },
+    {
+      "performance": "11",
+      "median_fret": 7,
+      "window": [
+        4,
+        10
+      ],
+      "truth_in_window": 55.3,
+      "tones": {
+        "clean": {
+          "auto": 33.8,
+          "median +- 3": 52.5,
+          "median +- 2": 46.2,
+          "best UI setting": 53.8,
+          "best_ui": 6,
+          "matched": 80
+        },
+        "moderate": {
+          "auto": 32.0,
+          "median +- 3": 49.3,
+          "median +- 2": 42.7,
+          "best UI setting": 50.7,
+          "best_ui": 6,
+          "matched": 75
+        },
+        "heavy": {
+          "auto": 26.8,
+          "median +- 3": 46.5,
+          "median +- 2": 40.8,
+          "best UI setting": 46.5,
+          "best_ui": 7,
+          "matched": 71
+        }
+      }
+    },
+    {
+      "performance": "12",
+      "median_fret": 6,
+      "window": [
+        3,
+        9
+      ],
+      "truth_in_window": 97.6,
+      "tones": {
+        "clean": {
+          "auto": 21.5,
+          "median +- 3": 86.1,
+          "median +- 2": 91.1,
+          "best UI setting": 86.1,
+          "best_ui": 6,
+          "matched": 79
+        },
+        "moderate": {
+          "auto": 30.5,
+          "median +- 3": 84.7,
+          "median +- 2": 91.5,
+          "best UI setting": 88.1,
+          "best_ui": 7,
+          "matched": 59
+        },
+        "heavy": {
+          "auto": 36.8,
+          "median +- 3": 86.8,
+          "median +- 2": 89.5,
+          "best UI setting": 89.5,
+          "best_ui": 7,
+          "matched": 38
+        }
+      }
+    }
+  ]
+}

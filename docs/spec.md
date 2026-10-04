@@ -81,17 +81,22 @@ GET /jobs/{job_id} — Returns 200:
 result only populated when status is "done". Unknown job_id → 404.
 Status is a FIXED enum — never a fifth value. Also returns the job's
 notation overrides, tempo_factor (0.5 | 1 | 2, default 1) and
-bar_offset_beats (0-3, default 0), and for isolate_guitar jobs:
+bar_offset_beats (0-3, default 0), its neck_position ("auto" (default) |
+"open" | an integer 1-17, see 3.5), and for isolate_guitar jobs:
 separation_quality (what was asked for), separator ("demucs" | "mega53",
 what produced the stem, set once it exists) and separation_note (why a
 "high" job was separated with Demucs; null otherwise). These are fields
 of the job, not of result.
 
-PATCH /jobs/{job_id} — JSON {tempo_factor?, bar_offset_beats?}; fields
-left out keep their value. Finished jobs only (409 otherwise); invalid
-values → 422. Stores the overrides; nothing is re-transcribed. Returns
-the same body as GET /jobs/{job_id}, whose result.bars reflects the new
-overrides.
+PATCH /jobs/{job_id} — JSON {tempo_factor?, bar_offset_beats?,
+neck_position?}; fields left out keep their value. Finished jobs only (409
+otherwise; also 409 for a neck position on a job with no stored
+raw_note_events); invalid values → 422. Stores the overrides; nothing is
+re-transcribed. Returns the same body as GET /jobs/{job_id}, whose
+result.bars reflects the new overrides. A neck_position other than "auto"
+re-maps the job's stored raw_note_events inside that fret window on every
+read of GET /jobs/{job_id} and the MusicXML export, so result.notes' (and
+the TAB staff's) strings and frets change. Which notes there are doesn't.
 
 GET /jobs/{job_id}/musicxml — the finished tab as MusicXML 4.0
 (application/vnd.recordare.musicxml+xml, attachment
@@ -170,6 +175,18 @@ Algorithm: dynamic programming — dp[i][pos] = min cumulative cost to reach
 candidate pos for note i. Viterbi-style backward pointer reconstruction.
 Chords: treat as one combined position; v1 picks lowest-fret valid
 combination (hand-shape realism is a stretch goal).
+
+Neck position (a user choice, PATCH /jobs/{id}; worker/tasks/fretmap.py,
+pure stdlib so the backend runs it too): a fret window. "auto" = none,
+the algorithm above exactly. "open" = frets 0-4. N = frets max(1, N-3) to
+N+3, without open strings. With a window, a single note's candidates are
+its positions inside the window, or its nearest ones (fewest frets
+outside) if it has none. A chord's candidates are its voicings on distinct
+strings with the fewest total frets outside the window, preferring a
+fretted span of at most 4 frets, at most 12 of them, lowest fret sum
+first. The DP then chooses as above. Which notes are dropped as unplayable
+is decided without the window, so every setting places the same notes.
+Measured in experiments/neck_position/README.md.
 
 ### 3.6 Tab JSON Schema
 

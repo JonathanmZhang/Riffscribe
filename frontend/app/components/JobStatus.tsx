@@ -8,9 +8,13 @@ import {
   getSeparationCapabilities,
   rerunJobWithIsolation,
   setJobOverrides,
+  NECK_CENTRES,
+  NECK_HALF_WIDTH,
   type BarOffsetBeats,
+  type JobOverrides,
   type JobStage,
   type JobStatusValue,
+  type NeckPosition,
   type PlaybackTone,
   type SeparationQuality,
   type Separator,
@@ -70,6 +74,18 @@ const SEPARATOR_LABELS: Record<Separator, string> = {
   mega53: "Guitar isolated with Mega 53 (high quality).",
 };
 
+// "Neck position" choices: the select's value is the option's string form.
+const NECK_OPTIONS: { value: string; label: string }[] = [
+  { value: "auto", label: "Auto" },
+  { value: "open", label: "Open position (frets 0–4)" },
+  ...NECK_CENTRES.map((fret) => ({
+    value: String(fret),
+    label: `Around fret ${fret} (frets ${Math.max(1, fret - NECK_HALF_WIDTH)}–${fret + NECK_HALF_WIDTH})`,
+  })),
+];
+const parseNeckPosition = (value: string): NeckPosition =>
+  value === "auto" || value === "open" ? value : Number(value);
+
 const segmentClass = (selected: boolean) =>
   `rounded-md px-3 py-1 transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-indigo-500 ${
     selected ? "bg-white text-slate-900 shadow-sm" : "text-slate-600 hover:text-slate-900"
@@ -97,6 +113,9 @@ export default function JobStatus({ jobId, onJobCreated }: JobStatusProps) {
   const [tone, setTone] = useState<PlaybackTone>("clean");
   const [tempoFactor, setTempoFactor] = useState<TempoFactor>(1);
   const [barOffsetBeats, setBarOffsetBeats] = useState<BarOffsetBeats>(0);
+  const [neckPosition, setNeckPosition] = useState<NeckPosition>("auto");
+  const [neckUpdating, setNeckUpdating] = useState(false);
+  const [neckError, setNeckError] = useState<string | null>(null);
   const [highQualityAvailable, setHighQualityAvailable] = useState(false);
   const [rerunQuality, setRerunQuality] = useState<SeparationQuality>("standard");
   const [rerunning, setRerunning] = useState(false);
@@ -148,6 +167,7 @@ export default function JobStatus({ jobId, onJobCreated }: JobStatusProps) {
             setResult(job.result);
             setTempoFactor(job.tempo_factor);
             setBarOffsetBeats(job.bar_offset_beats);
+            setNeckPosition(job.neck_position);
             if (job.stem_available && readDebugParams().src === "stem") setSource("stem");
           }
         }
@@ -213,13 +233,26 @@ export default function JobStatus({ jobId, onJobCreated }: JobStatusProps) {
     setView(next);
   };
 
-  // Bar-line overrides: the backend recomputes the bars (and the MusicXML)
-  // from the stored transcription; the new result carries the new bars.
-  const applyOverrides = async (overrides: { tempo_factor?: TempoFactor; bar_offset_beats?: BarOffsetBeats }) => {
+  // Overrides: the backend recomputes the bars and the note positions (and
+  // the MusicXML) from the stored transcription; the new result carries them.
+  const applyOverrides = async (overrides: JobOverrides) => {
     const job = await setJobOverrides(jobId, overrides);
     setResult(job.result);
     setTempoFactor(job.tempo_factor);
     setBarOffsetBeats(job.bar_offset_beats);
+    setNeckPosition(job.neck_position);
+  };
+
+  const changeNeckPosition = async (next: NeckPosition) => {
+    setNeckUpdating(true);
+    setNeckError(null);
+    try {
+      await applyOverrides({ neck_position: next });
+    } catch (err) {
+      setNeckError(err instanceof Error ? err.message : "Failed to change the neck position.");
+    } finally {
+      setNeckUpdating(false);
+    }
   };
 
   const rerunWithIsolation = async () => {
@@ -333,6 +366,31 @@ export default function JobStatus({ jobId, onJobCreated }: JobStatusProps) {
               ))}
             </div>
           </div>
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
+            <label className="flex items-center gap-2">
+              <span className="text-slate-500">Neck position</span>
+              <select
+                value={String(neckPosition)}
+                disabled={neckUpdating}
+                onChange={(event) => void changeNeckPosition(parseNeckPosition(event.target.value))}
+                className="rounded-md border border-slate-200 bg-white px-2 py-1 text-sm font-medium text-slate-700 shadow-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-indigo-500 disabled:opacity-50"
+              >
+                {NECK_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <span className="text-xs text-slate-500">
+              {neckUpdating
+                ? "Placing the notes…"
+                : neckPosition === "auto"
+                  ? "Where the mapper finds the least hand movement."
+                  : "Same notes, played in this part of the neck where they fit."}
+            </span>
+            {neckError && <p className="w-full text-sm text-red-600">{neckError}</p>}
+          </div>
           <div className="flex flex-col gap-3">
             <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-sm">
               <span className="text-slate-500">Listen to</span>
@@ -420,6 +478,7 @@ export default function JobStatus({ jobId, onJobCreated }: JobStatusProps) {
               bars={result.bars ?? []}
               tempoFactor={tempoFactor}
               barOffsetBeats={barOffsetBeats}
+              neckPosition={neckPosition}
               playbackRate={playbackRate}
               playback={source === "synth" ? "synth" : "recording"}
               tone={tone}

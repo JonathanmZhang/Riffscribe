@@ -1,7 +1,7 @@
 from enum import Enum
-from typing import Literal, Optional
+from typing import Annotated, Literal, Optional, Union
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, StrictInt
 
 from app.schemas.tab import TabResult
 
@@ -31,6 +31,11 @@ PlaybackTone = Literal["clean", "overdriven", "distorted", "acoustic"]
 # Job-level notation overrides (tasks/rhythm.TEMPO_FACTORS / BAR_OFFSETS).
 TempoFactor = Literal[0.5, 1.0, 2.0]
 BarOffset = Literal[0, 1, 2, 3]
+# Where on the neck the tab is placed (tasks/fretmap.neck_window): "auto"
+# (the mapper's own choice), "open" (frets 0-4, open strings allowed), or a
+# centre fret N for frets N-3..N+3 (no open strings), N in
+# fretmap.NECK_CENTRES (1-17).
+NeckPosition = Union[Literal["auto", "open"], Annotated[StrictInt, Field(ge=1, le=17)]]
 
 
 class JobCreateResponse(BaseModel):
@@ -56,16 +61,21 @@ class JobStatusResponse(BaseModel):
     # MusicXML export, never the transcription.
     tempo_factor: TempoFactor = 1.0
     bar_offset_beats: BarOffset = 0
+    # Changes result.notes' strings and frets (and the export's TAB staff),
+    # never which notes there are.
+    neck_position: NeckPosition = "auto"
 
 
 class JobOverrides(BaseModel):
     """PATCH /jobs/{id} body; fields left out keep their current value.
     tempo_factor: 0.5 halves beat_this's beats (every other one), 2 doubles
     them (fast songs often come out at half tempo). bar_offset_beats: moves
-    the bar lines later by this many beats."""
+    the bar lines later by this many beats. neck_position: re-maps the
+    stored notes onto the fretboard inside that fret window."""
 
     tempo_factor: Optional[TempoFactor] = None
     bar_offset_beats: Optional[BarOffset] = None
+    neck_position: Optional[NeckPosition] = None
 
 
 class JobRerun(BaseModel):

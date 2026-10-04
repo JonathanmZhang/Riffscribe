@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 import shutil
 from uuid import uuid4
@@ -18,9 +19,14 @@ from app.schemas.job import (
     JobStatusResponse,
     PlaybackTone,
 )
-# Pure notation code shared with the worker (worker/tasks/rhythm.py and
-# musicxml.py, copied in by backend/Dockerfile from the "worker" context).
-from tasks import musicxml, rhythm
+from app.schemas.tab import TabResult
+# Pure code shared with the worker (worker/tasks/rhythm.py, musicxml.py and
+# fretmap.py, copied in by backend/Dockerfile from the "worker" context).
+from tasks import fretmap, musicxml, rhythm
+
+# The mapper's "dropped an unplayable note" warnings: the worker logged them
+# when the job was first mapped, so re-mapping on every read stays quiet.
+logging.getLogger("tasks.fretboard").setLevel(logging.ERROR)
 
 router = APIRouter(prefix="/jobs", tags=["jobs"])
 
@@ -191,17 +197,32 @@ async def rerun_job(job_id: str, options: JobRerun) -> JobCreateResponse:
     return JobCreateResponse(job_id=new_id, status=JobStatus.queued)
 
 
+def _result_data(job_data: dict) -> dict:
+    """The stored TabResult dict with the job's neck position applied: for
+    anything but "auto", the notes are re-mapped from the stored
+    raw_note_events (internal, written by transcribe) inside that fret
+    window. Same notes, only strings and frets differ. Done per read, like
+    the bars (~10-100ms for a few hundred notes)."""
+    result = job_data["result"]
+    window = fretmap.neck_window(job_data.get("neck_position", "auto"))
+    if window is not None and job_data.get("raw_note_events"):
+        result = {**result, "notes": fretmap.map_notes_to_positions(job_data["raw_note_events"], window)}
+    return result
+
+
 def _status_response(raw: str) -> JobStatusResponse:
     job = JobRecord.model_validate_json(raw)
     # stage, stem_audio_path, separator and the overrides aren't part of JobRecord, so
     # read them from the raw stored dict (as get_job_audio does).
     job_data = json.loads(raw)
-    result = job.result
-    if result is not None:
+    result = None
+    if job.result is not None:
+        result_data = _result_data(job_data)
         # Derived on every read, not stored, so it always matches the
         # MusicXML export for the job's current overrides (older jobs too).
-        result = result.model_copy(update={"bars": rhythm.measure_starts(
-            job_data["result"], job_data.get("tempo_factor", 1.0), job_data.get("bar_offset_beats", 0))})
+        bars = rhythm.measure_starts(
+            result_data, job_data.get("tempo_factor", 1.0), job_data.get("bar_offset_beats", 0))
+        result = TabResult.model_validate({**result_data, "bars": bars})
     return JobStatusResponse(
         job_id=job.job_id,
         status=job.status,
@@ -215,6 +236,7 @@ def _status_response(raw: str) -> JobStatusResponse:
         separation_note=job_data.get("separation_note"),
         tempo_factor=job_data.get("tempo_factor", 1.0),
         bar_offset_beats=job_data.get("bar_offset_beats", 0),
+        neck_position=job_data.get("neck_position", "auto"),
     )
 
 
@@ -229,18 +251,20 @@ async def get_job(job_id: str) -> JobStatusResponse:
 @router.patch("/{job_id}", response_model=JobStatusResponse)
 async def update_job_overrides(job_id: str, overrides: JobOverrides) -> JobStatusResponse:
     """Sets the job's notation overrides. Nothing is re-transcribed: the
-    response's result.bars and the MusicXML export are derived from the
-    stored notes and beats with the new overrides on every read. Only for
-    finished jobs, so this never races the worker's writes to the same
-    record."""
+    response's result.bars, its notes' positions (neck_position) and the
+    MusicXML export are derived from the stored notes and beats with the
+    new overrides on every read. Only for finished jobs, so this never
+    races the worker's writes to the same record."""
     raw = await redis_client.get(_job_key(job_id))
     if raw is None:
         raise HTTPException(status_code=404, detail="Job not found")
     job_data = json.loads(raw)
     if job_data.get("status") != JobStatus.done.value or not job_data.get("result"):
         raise HTTPException(status_code=409, detail="Overrides can only be set on a finished job")
+    if overrides.neck_position not in (None, "auto") and not job_data.get("raw_note_events"):
+        raise HTTPException(status_code=409, detail="This job has no stored notes to place on the neck again")
 
-    for field in ("tempo_factor", "bar_offset_beats"):
+    for field in ("tempo_factor", "bar_offset_beats", "neck_position"):
         value = getattr(overrides, field)
         if value is not None:
             job_data[field] = value
@@ -262,7 +286,7 @@ async def get_job_musicxml(job_id: str, tone: PlaybackTone = musicxml.DEFAULT_TO
     if job_data.get("status") != JobStatus.done.value or not job_data.get("result"):
         raise HTTPException(status_code=404, detail="MusicXML not available for this job yet")
 
-    content = musicxml.to_musicxml(job_data["result"], job_data.get("tempo_factor", 1.0),
+    content = musicxml.to_musicxml(_result_data(job_data), job_data.get("tempo_factor", 1.0),
                                    job_data.get("bar_offset_beats", 0), tone=tone)
     return Response(
         content=content,
