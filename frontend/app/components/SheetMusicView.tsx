@@ -82,6 +82,9 @@ interface SheetMusicViewProps {
   tempoFactor: TempoFactor;
   barOffsetBeats: BarOffsetBeats;
   playbackRate: number;
+  // The transport's volume (0-1). Synth only: the recordings' volume is set
+  // on the <audio> by JobStatus.
+  volume: number;
   playback: SheetPlayback;
   // Synth only: sets the export's MIDI program, which alphaTab's synth plays.
   tone: PlaybackTone;
@@ -102,6 +105,7 @@ export default function SheetMusicView({
   tempoFactor,
   barOffsetBeats,
   playbackRate,
+  volume,
   playback,
   tone,
   positionRef,
@@ -113,6 +117,8 @@ export default function SheetMusicView({
   const apiRef = useRef<AlphaTab.AlphaTabApi | null>(null);
   const barsRef = useRef(bars);
   barsRef.current = bars;
+  const volumeRef = useRef(volume);
+  volumeRef.current = volume;
   // True from a score (re)load until the player has settled. alphaTab stops
   // and rewinds its player while a score loads; meanwhile that is kept away
   // from the recording (it plays on where it is), and in synth mode the
@@ -180,8 +186,8 @@ export default function SheetMusicView({
         api.renderFinished.on(() => setLoading(false));
         api.error.on((e) => setError(e.message ?? String(e)));
         api.playerReady.on(() => {
-          // Synth only: with the recording, masterVolume is the <audio> volume.
-          if (api && playback === "synth") api.masterVolume = SYNTH_MASTER_VOLUME;
+          // Synth only: with the recording, the <audio> volume is the page's.
+          if (api && playback === "synth") api.masterVolume = SYNTH_MASTER_VOLUME * volumeRef.current;
           setPlayerReady(true);
         });
 
@@ -200,12 +206,12 @@ export default function SheetMusicView({
             set playbackRate(value: number) {
               audio.playbackRate = value;
             },
+            // The page's transport owns the recording's volume; alphaTab's
+            // own volume (1 by default) is never pushed onto the <audio>.
             get masterVolume() {
               return audio.volume;
             },
-            set masterVolume(value: number) {
-              audio.volume = value;
-            },
+            set masterVolume(_value: number) {},
             seekTo(ms: number) {
               if (!settlingRef.current) audio.currentTime = ms / 1000;
             },
@@ -385,6 +391,10 @@ export default function SheetMusicView({
       cancelled = true;
     };
   }, [jobId, playback, barsKey, tone]);
+
+  useEffect(() => {
+    if (apiRef.current && playback === "synth" && playerReady) apiRef.current.masterVolume = SYNTH_MASTER_VOLUME * volume;
+  }, [volume, playback, playerReady]);
 
   useEffect(() => {
     if (apiRef.current && playback === "synth") apiRef.current.playbackSpeed = playbackRate;

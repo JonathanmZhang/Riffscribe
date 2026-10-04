@@ -194,7 +194,11 @@ stays the fixed four-value enum.
   synthControlRef (toggle / seek / ready). The transport polls its own
   state every 100ms so the big tab table doesn't re-render while playing.
   A tone or bar reload pauses the synth before alphaTab rewinds it, then
-  the hand-off resumes it (no audible jump to the start).
+  the hand-off resumes it (no audible jump to the start). Volume slider
+  (0-1, JobStatus state): the <audio>'s volume, and the synth's
+  masterVolume = SYNTH_MASTER_VOLUME (0.4) x volume, so the anti-clipping
+  headroom stays. alphaTab's external-media handler ignores masterVolume
+  writes, so loading the sheet view can't reset the recording to 1.
 - Accessibility floor kept by the design pass (feature/design-pass): small
   text on slate-100/slate-50 is slate-600 or darker (slate-500 there is
   4.34:1); empty tab cells draw their dash in CSS (td[data-empty]::before),

@@ -16,6 +16,9 @@ interface TransportProps {
   synthControlRef: MutableRefObject<SynthControl | null>;
   // Used until the audio's own duration is known.
   fallbackDuration: number;
+  // 0-1; JobStatus applies it to the <audio> and SheetMusicView to the synth.
+  volume: number;
+  onVolumeChange: (volume: number) => void;
 }
 
 function formatTime(seconds: number): string {
@@ -23,7 +26,15 @@ function formatTime(seconds: number): string {
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
 }
 
-export default function Transport({ audioRef, synth, positionRef, synthControlRef, fallbackDuration }: TransportProps) {
+export default function Transport({
+  audioRef,
+  synth,
+  positionRef,
+  synthControlRef,
+  fallbackDuration,
+  volume,
+  onVolumeChange,
+}: TransportProps) {
   const [time, setTime] = useState(0);
   const [duration, setDuration] = useState(fallbackDuration);
   const [playing, setPlaying] = useState(false);
@@ -111,6 +122,22 @@ export default function Transport({ audioRef, synth, positionRef, synthControlRe
         aria-label="Playback position"
         aria-valuetext={`${formatTime(time)} of ${formatTime(duration)}`}
         className="h-2 min-w-0 flex-1 cursor-pointer accent-indigo-600 disabled:cursor-wait"
+      />
+      <svg viewBox="0 0 20 20" aria-hidden="true" className="hidden h-5 w-5 shrink-0 fill-slate-600 sm:block">
+        <path d="M9.4 3.6 5.5 7H3a1 1 0 0 0-1 1v4a1 1 0 0 0 1 1h2.5l3.9 3.4a.8.8 0 0 0 1.3-.6V4.2a.8.8 0 0 0-1.3-.6Z" />
+        {volume > 0 && <path d="M13.2 7.2a.8.8 0 0 1 1.1 0 4 4 0 0 1 0 5.6.8.8 0 1 1-1.1-1.1 2.4 2.4 0 0 0 0-3.4.8.8 0 0 1 0-1.1Z" />}
+        {volume > 0.5 && <path d="M15.4 5a.8.8 0 0 1 1.1 0 7 7 0 0 1 0 10 .8.8 0 0 1-1.1-1.1 5.4 5.4 0 0 0 0-7.8.8.8 0 0 1 0-1.1Z" />}
+      </svg>
+      <input
+        type="range"
+        min={0}
+        max={1}
+        step={0.05}
+        value={volume}
+        onChange={(event) => onVolumeChange(Number(event.target.value))}
+        aria-label="Volume"
+        aria-valuetext={`${Math.round(volume * 100)}%`}
+        className="h-2 w-16 shrink-0 cursor-pointer accent-indigo-600 sm:w-24"
       />
     </div>
   );

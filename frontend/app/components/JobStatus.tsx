@@ -94,6 +94,9 @@ export default function JobStatus({ jobId, onJobCreated }: JobStatusProps) {
   const [separationNote, setSeparationNote] = useState<string | null>(null);
   const [result, setResult] = useState<TabResult | null>(null);
   const [playbackRate, setPlaybackRate] = useState<number>(1);
+  // 0-1, for every source: the <audio> volume, and a fraction of the synth's
+  // anti-clipping master volume (SheetMusicView).
+  const [volume, setVolume] = useState(1);
   const [view, setView] = useState<"tab" | "sheet">("tab");
   const [source, setSource] = useState<PlaybackSource>("original");
   const [tone, setTone] = useState<PlaybackTone>("clean");
@@ -129,6 +132,11 @@ export default function JobStatus({ jobId, onJobCreated }: JobStatusProps) {
     audio.defaultPlaybackRate = playbackRate;
     audio.playbackRate = playbackRate;
   }, [playbackRate, result]);
+
+  // The recordings' volume (the <audio> keeps it across a change of source).
+  useEffect(() => {
+    if (audioRef.current) audioRef.current.volume = volume;
+  }, [volume, result]);
 
   useEffect(() => {
     let cancelled = false;
@@ -435,6 +443,8 @@ export default function JobStatus({ jobId, onJobCreated }: JobStatusProps) {
               positionRef={positionRef}
               synthControlRef={synthControlRef}
               fallbackDuration={result.duration_seconds}
+              volume={volume}
+              onVolumeChange={setVolume}
             />
             <div className="flex items-center gap-3 text-sm">
               <span className="text-slate-500">Speed</span>
@@ -463,6 +473,7 @@ export default function JobStatus({ jobId, onJobCreated }: JobStatusProps) {
               tempoFactor={tempoFactor}
               barOffsetBeats={barOffsetBeats}
               playbackRate={playbackRate}
+              volume={volume}
               playback={source === "synth" ? "synth" : "recording"}
               tone={tone}
               positionRef={positionRef}
